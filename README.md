@@ -2,6 +2,8 @@
 The project is dependent on following libraries: glib, uthash, gstreamer, quiche.
 
 ## Run
+- put all files under quiche/example, then make
+
 - params: host port use_dgram(0:stream, 1:dgram)
 
 - server/sender：
