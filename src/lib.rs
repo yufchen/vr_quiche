@@ -4303,6 +4303,20 @@ impl Connection {
     pub fn stream_send(
         &mut self, stream_id: u64, buf: &[u8], fin: bool,
     ) -> Result<usize> {
+        self.stream_send_full(
+            stream_id,
+            buf,
+            fin,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            stream_id, // default: no depend
+        )
+    }
+
+    pub fn stream_send_full(
+        &mut self, stream_id: u64, buf: &[u8], fin: bool, deadline: u64,
+        priority: u64, depend_id: u64,
+    ) -> Result<usize> {
         // We can't write on the peer's unidirectional streams.
         if !stream::is_bidi(stream_id) &&
             !stream::is_local(stream_id, self.is_server)
@@ -4337,7 +4351,7 @@ impl Connection {
         };
 
         // Get existing stream or create a new one.
-        let stream = self.get_or_create_stream(stream_id, true)?;
+        let stream = self.get_or_create_stream_full(stream_id, true, deadline, priority, depend_id,)?;
 
         #[cfg(feature = "qlog")]
         let offset = stream.send.off_back();
@@ -6066,12 +6080,29 @@ impl Connection {
     fn get_or_create_stream(
         &mut self, id: u64, local: bool,
     ) -> Result<&mut stream::Stream> {
+        self.get_or_create_stream_full(
+            id,
+            local,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            id,
+        )
+    }
+
+    /// Create stream with deadline and priority.
+    fn get_or_create_stream_full(
+        &mut self, id: u64, local: bool, deadline: u64, priority: u64,
+        depend_id: u64,
+    ) -> Result<&mut stream::Stream> {
         self.streams.get_or_create(
             id,
             &self.local_transport_params,
             &self.peer_transport_params,
             local,
             self.is_server,
+            deadline,
+            priority,
+            depend_id,
         )
     }
 

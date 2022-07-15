@@ -250,6 +250,7 @@ impl StreamMap {
     pub(crate) fn get_or_create(
         &mut self, id: u64, local_params: &crate::TransportParams,
         peer_params: &crate::TransportParams, local: bool, is_server: bool,
+        deadline: u64, priority: u64, depend_id: u64,
     ) -> Result<&mut Stream> {
         let stream = match self.streams.entry(id) {
             hash_map::Entry::Vacant(v) => {
@@ -343,12 +344,15 @@ impl StreamMap {
                     },
                 };
 
-                let s = Stream::new(
+                let s = Stream::new_full(
                     max_rx_data,
                     max_tx_data,
                     is_bidi(id),
                     local,
                     self.max_stream_window,
+                    deadline,
+                    priority,
+                    depend_id,
                 );
                 v.insert(s)
             },
@@ -815,6 +819,23 @@ impl Stream {
             incremental: true,
         }
     }
+
+    /// Creates a new stream with the given flow control limits.
+    pub fn new_full(
+        max_rx_data: u64, max_tx_data: u64, bidi: bool, local: bool,
+        max_window: u64, deadline: u64, priority: u64, depend_id: u64,
+    ) -> Stream {
+        Stream {
+            recv: RecvBuf::new(max_rx_data, max_window),
+            send: SendBuf::new_full(max_tx_data, deadline, priority, depend_id),
+            bidi,
+            local,
+            data: None,
+            urgency: DEFAULT_URGENCY,
+            incremental: true,
+        }
+    }
+
 
     /// Returns true if the stream has data to read.
     pub fn is_readable(&self) -> bool {
