@@ -105,6 +105,7 @@ fn main() {
     config.set_initial_max_streams_uni(100);
     config.set_disable_active_migration(true);
     config.enable_early_data();
+    config.enable_dgram(true, 1000, 1000);
 
     let rng = SystemRandom::new();
     let conn_id_seed =
@@ -309,28 +310,36 @@ fn main() {
                     handle_writable(client, stream_id);
                 }
 
-                // Process all readable streams.
-                for s in client.conn.readable() {
-                    while let Ok((read, fin)) =
-                        client.conn.stream_recv(s, &mut buf)
-                    {
-                        debug!(
-                            "{} received {} bytes",
-                            client.conn.trace_id(),
-                            read
-                        );
-
-                        let stream_buf = &buf[..read];
-
-                        debug!(
-                            "{} stream {} has {} bytes (fin? {})",
-                            client.conn.trace_id(),
-                            s,
-                            stream_buf.len(),
-                            fin
-                        );
-
-                        handle_stream(client, s, stream_buf, "examples/root");
+                //Process all readable streams.
+                // for s in client.conn.readable() {
+                //     while let Ok((read, fin)) =
+                //         client.conn.stream_recv(s, &mut buf)
+                //     {
+                //         debug!(
+                //             "{} received {} bytes",
+                //             client.conn.trace_id(),
+                //             read
+                //         );
+                //         println!("{:?}, buf len {}", buf, buf.len());
+                //         let stream_buf = &buf[..read];
+                //         println!("{:?}, buf len {}", stream_buf, stream_buf.len());
+                //         debug!(
+                //             "{} stream {} has {} bytes (fin? {})",
+                //             client.conn.trace_id(),
+                //             s,
+                //             stream_buf.len(),
+                //             fin
+                //         );
+                //
+                //         handle_stream(client, s, stream_buf, "examples/root");
+                //     }
+                // }
+                if client.conn.is_readable() {
+                    while let Ok((read)) = client.conn.dgram_recv(&mut buf) {
+                        println!("Got {} bytes of DATAGRAM", read);
+                        let dgram_buf = &buf[..read];
+                        println!("{:?}, buf len {}", dgram_buf, dgram_buf.len());
+                        handle_dgram(client, dgram_buf, "examples/root");
                     }
                 }
             }
@@ -494,6 +503,31 @@ fn handle_stream(client: &mut Client, stream_id: u64, buf: &[u8], root: &str) {
         }
     }
 }
+
+
+fn handle_dgram(client: &mut Client, buf: &[u8], root: &str) {
+    let conn = &mut client.conn;
+
+    if buf.len() > 4 && &buf[..4] == b"GET " {
+        let uri = &buf[4..buf.len()];
+        let uri = String::from_utf8(uri.to_vec()).unwrap();
+        let uri = String::from(uri.lines().next().unwrap());
+        let uri = std::path::Path::new(&uri);
+        let mut path = std::path::PathBuf::from(root);
+
+        for c in uri.components() {
+            if let std::path::Component::Normal(v) = c {
+                path.push(v)
+            }
+        }
+
+        let body = std::fs::read(path.as_path())
+            .unwrap_or_else(|_| b"Not Found!\r\n".to_vec());
+
+        conn.dgram_send(&body).unwrap()
+    }
+}
+
 
 /// Handles newly writable streams.
 fn handle_writable(client: &mut Client, stream_id: u64) {

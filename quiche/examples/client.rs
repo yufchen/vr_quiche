@@ -99,6 +99,7 @@ fn main() {
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
     config.set_disable_active_migration(true);
+    config.enable_dgram(true, 1000, 1000);
 
     // Generate a random source connection ID for the connection.
     let mut scid = [0; quiche::MAX_CONN_ID_LEN];
@@ -199,42 +200,52 @@ fn main() {
         // Send an HTTP request as soon as the connection is established.
         if conn.is_established() && !req_sent {
             info!("sending HTTP request for {}", url.path());
-
+            println!("sending HTTP request for {}", url.path());
             let req = format!("GET {}\r\n", url.path());
-            conn.stream_send(HTTP_REQ_STREAM_ID, req.as_bytes(), true)
-                .unwrap();
-
+            // conn.stream_send(HTTP_REQ_STREAM_ID, req.as_bytes(), true)
+            //     .unwrap();
+            println!("{:?}", req.as_bytes());
+            conn.dgram_send(req.as_bytes()).unwrap();
             req_sent = true;
         }
 
         // Process all readable streams.
-        for s in conn.readable() {
-            while let Ok((read, fin)) = conn.stream_recv(s, &mut buf) {
-                debug!("received {} bytes", read);
-
-                let stream_buf = &buf[..read];
-
-                debug!(
-                    "stream {} has {} bytes (fin? {})",
-                    s,
-                    stream_buf.len(),
-                    fin
-                );
-
-                print!("{}", unsafe {
-                    std::str::from_utf8_unchecked(stream_buf)
+        // for s in conn.readable() {
+        //     while let Ok((read, fin)) = conn.stream_recv(s, &mut buf) {
+        //         debug!("received {} bytes", read);
+        //
+        //         let stream_buf = &buf[..read];
+        //
+        //         debug!(
+        //             "stream {} has {} bytes (fin? {})",
+        //             s,
+        //             stream_buf.len(),
+        //             fin
+        //         );
+        //
+        //         print!("{}", unsafe {
+        //             std::str::from_utf8_unchecked(stream_buf)
+        //         });
+        //
+        //         // The server reported that it has no more data to send, which
+        //         // we got the full response. Close the connection.
+        //         if s == HTTP_REQ_STREAM_ID && fin {
+        //             info!(
+        //                 "response received in {:?}, closing...",
+        //                 req_start.elapsed()
+        //             );
+        //
+        //             conn.close(true, 0x00, b"kthxbye").unwrap();
+        //         }
+        //     }
+        // }
+        if conn.is_readable() {
+            while let Ok((read)) = conn.dgram_recv(&mut buf) {
+                println!("Got {} bytes of DATAGRAM", read);
+                let dgram_buf = &buf[..read];
+                println!("{}", unsafe {
+                    std::str::from_utf8_unchecked(dgram_buf)
                 });
-
-                // The server reported that it has no more data to send, which
-                // we got the full response. Close the connection.
-                if s == HTTP_REQ_STREAM_ID && fin {
-                    info!(
-                        "response received in {:?}, closing...",
-                        req_start.elapsed()
-                    );
-
-                    conn.close(true, 0x00, b"kthxbye").unwrap();
-                }
             }
         }
 

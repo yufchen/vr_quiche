@@ -44,7 +44,11 @@ use crate::Result;
 use crate::flowcontrol;
 use crate::ranges;
 
-const DEFAULT_URGENCY: u8 = 127;
+use crate::Config;
+use crate::scheduler::{Scheduler, DynScheduler};
+use crate::scheduler;
+
+const DEFAULT_URGENCY: u64 = 127;
 
 #[cfg(test)]
 const SEND_BUFFER_SIZE: usize = 5;
@@ -57,6 +61,22 @@ const DEFAULT_STREAM_WINDOW: u64 = 32 * 1024;
 
 /// The maximum size of the receiver stream flow control window.
 pub const MAX_STREAM_WINDOW: u64 = 16 * 1024 * 1024;
+
+
+pub const MAX_DEADLINE: u64 = 9999999;
+pub const DEFAULT_PRIORITY: u64 = 9999999;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct Block {
+    pub block_id: u64,
+    pub block_deadline: u64,
+    pub block_priority: u64,
+    pub block_create_time: u64,
+    pub block_size: u64,
+    pub remaining_size: u64,
+    pub depend_id: u64,
+}
+
 
 /// A simple no-op hasher for Stream IDs.
 ///
@@ -141,7 +161,7 @@ pub struct StreamMap {
     /// same urgency level Non-incremental streams are scheduled first, in the
     /// order of their stream IDs, and incremental streams are scheduled in a
     /// round-robin fashion after all non-incremental streams have been flushed.
-    flushable: BTreeMap<u8, (BinaryHeap<std::cmp::Reverse<u64>>, VecDeque<u64>)>,
+    flushable: BTreeMap<u64, (BinaryHeap<std::cmp::Reverse<u64>>, VecDeque<u64>)>,
 
     /// Set of stream IDs corresponding to streams that have outstanding data
     /// to read. This is used to generate a `StreamIter` of streams without
@@ -153,6 +173,12 @@ pub struct StreamMap {
     /// a `StreamIter` of streams without having to iterate over the full list
     /// of streams.
     writable: StreamIdHashSet,
+
+    /// Set of stream IDs corresponding to blocks that have been canceled
+    /// because of having missed deadline.
+    /// insert when canceled, remove when reset frame sended.
+    //canceled: HashSet<u64>,
+
 
     /// Set of stream IDs corresponding to streams that are almost out of flow
     /// control credit and need to send MAX_STREAM_DATA. This is used to
@@ -177,11 +203,13 @@ pub struct StreamMap {
 
     /// The maximum size of a stream window.
     max_stream_window: u64,
+
+    scheduler: DynScheduler,
 }
 
 impl StreamMap {
     pub fn new(
-        max_streams_bidi: u64, max_streams_uni: u64, max_stream_window: u64,
+        max_streams_bidi: u64, max_streams_uni: u64, max_stream_window: u64, config: &Config
     ) -> StreamMap {
         StreamMap {
             local_max_streams_bidi: max_streams_bidi,
@@ -191,6 +219,8 @@ impl StreamMap {
             local_max_streams_uni_next: max_streams_uni,
 
             max_stream_window,
+
+            scheduler: DynScheduler::init(config.scheduler_type),
 
             ..StreamMap::default()
         }
@@ -221,6 +251,7 @@ impl StreamMap {
     pub(crate) fn get_or_create(
         &mut self, id: u64, local_params: &crate::TransportParams,
         peer_params: &crate::TransportParams, local: bool, is_server: bool,
+        deadline: u64, priority: u64, depend_id: u64,
     ) -> Result<&mut Stream> {
         let stream = match self.streams.entry(id) {
             hash_map::Entry::Vacant(v) => {
@@ -266,8 +297,9 @@ impl StreamMap {
                             self.local_opened_streams_bidi,
                             stream_sequence + 1,
                         );
-
+                        //eprintln!("stream_n {}, {}", self.local_opened_streams_bidi, stream_sequence + 1);
                         if n > self.peer_max_streams_bidi {
+                            eprintln!("n > self.peer_max_streams_bidi");
                             return Err(Error::StreamLimit);
                         }
 
@@ -314,12 +346,15 @@ impl StreamMap {
                     },
                 };
 
-                let s = Stream::new(
+                let s = Stream::new_full(
                     max_rx_data,
                     max_tx_data,
                     is_bidi(id),
                     local,
                     self.max_stream_window,
+                    deadline,
+                    priority,
+                    depend_id,
                 );
                 v.insert(s)
             },
@@ -344,7 +379,7 @@ impl StreamMap {
     /// Queueing a stream multiple times simultaneously means that it might be
     /// unfairly scheduled more often than other streams, and might also cause
     /// spurious cycles through the queue, so it should be avoided.
-    pub fn push_flushable(&mut self, stream_id: u64, urgency: u8, incr: bool) {
+    pub fn push_flushable(&mut self, stream_id: u64, urgency: u64, incr: bool) {
         // Push the element to the back of the queue corresponding to the given
         // urgency. If the queue doesn't exist yet, create it first.
         let queues = self
@@ -367,36 +402,160 @@ impl StreamMap {
     /// Note that if the stream is still flushable after sending some of its
     /// outstanding data, it needs to be added back to the queue.
     pub fn pop_flushable(&mut self) -> Option<u64> {
-        // Remove the first element from the queue corresponding to the lowest
-        // urgency that has elements.
-        let (node, clear) =
-            if let Some((urgency, queues)) = self.flushable.iter_mut().next() {
-                let node = if !queues.0.is_empty() {
-                    queues.0.pop().map(|x| x.0)
-                } else {
-                    queues.1.pop_front()
-                };
-
-                let clear = if queues.0.is_empty() && queues.1.is_empty() {
-                    Some(*urgency)
+        self.flushable.iter_mut().next().and_then(|(_, queues)| {
+            queues.0.peek().map(|x| x.0).or_else(|| {
+                // When peeking incremental streams, make sure to move the current
+                // stream to the end of the queue so they are pocesses in a round
+                // robin fashion
+                if let Some(current_incremental) = queues.1.pop_front() {
+                    queues.1.push_back(current_incremental); //Round robin
+                    //queues.1.push_front(current_incremental); //FIFO
+                    Some(current_incremental)
                 } else {
                     None
-                };
+                }
+            })
+        })
+    }
 
-                (node, clear)
-            } else {
-                (None, None)
-            };
+    pub fn remove_flushable(&mut self) {
+        let mut top_urgency = self
+            .flushable
+            .first_entry()
+            .expect("Remove previously peeked stream");
 
+        let queues = top_urgency.get_mut();
+        queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_back()); //Round robin
+        //queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_front()); //FIFO
         // Remove the queue from the list of queues if it is now empty, so that
         // the next time `pop_flushable()` is called the next queue with elements
         // is used.
-        if let Some(urgency) = &clear {
-            self.flushable.remove(urgency);
-        }
-
-        node
+        // if queues.0.is_empty() && queues.1.is_empty() {
+        //     top_urgency.remove();
+        // }
     }
+
+    pub fn peek_flushable(
+        &mut self, bandwidth: f64, rtt: f64, next_packet_id: u64,
+        current_time: u64,
+    ) -> Option<u64> {
+
+        if let Some(o_queues) = self.flushable.get_mut(&DEFAULT_URGENCY) {
+            let mut queues = (*o_queues).clone();
+            let node = if !queues.0.is_empty() {
+                queues.0.pop().map(|x| x.0)
+            }
+            else {
+                //instead of pop_front(Round robin), we use a scheduler to decide the stream
+                //queues.1.pop_front();
+                let mut blocks_vec = vec![];
+                let mut peek_blocks_vec = vec![];
+
+                for i in (0..queues.1.len()).rev() {
+                    let &id = queues.1.get(i).unwrap();
+                    let block = self.get_block(id);
+                    peek_blocks_vec.push(block);
+                }
+
+
+                for i in (0..queues.1.len()).rev() {
+                    let &id = queues.1.get(i).unwrap();
+                    // check if need to cancel this block
+                    // let stream = self.get(id).unwrap();
+                    // let passed_time =
+                    //     stream.send.start_instant.unwrap().elapsed().as_millis();
+                    // create block structure for C++
+                    let block = self.get_block(id);
+                    //eprintln!("{} ms, block in queue: id {}", current_time, block.block_id);
+                    if self.scheduler.should_drop_block(&block, bandwidth, rtt, next_packet_id, current_time) {
+                        self.cancel_block(id).ok()?;
+                        // Block canceled, so non-flushable
+                        eprintln!("drop block: {}", id);
+                        queues.1.swap_remove_back(i);
+                        continue;
+                    }
+                    // add the block struct to blocks, and used by C++ code later
+                    blocks_vec.push(block);
+                }
+
+                if blocks_vec.is_empty() {
+                    None
+                } else {
+                    let b_id = self.scheduler.select_block(
+                                                       &mut blocks_vec,
+                                                       bandwidth,
+                                                       rtt,
+                                                       next_packet_id,
+                                                       current_time,
+                                                   );
+                    let best_block_id = Some(b_id);
+                    //eprintln!("best_block_id: {}", b_id);
+                    // pop(return and remove) highest_stream_id
+                    // for i in 0..queues.1.len() {
+                    //     let &id = queues.1.get(i).unwrap();
+                    //     if Some(id) == best_block_id {
+                    //         queues.1.swap_remove_front(i);
+                    //         break;
+                    //     }
+                    // }
+                    best_block_id
+                }
+            };
+            self.flushable.remove(&DEFAULT_URGENCY);
+            self.flushable.insert(DEFAULT_URGENCY, queues);
+            node
+        }
+        else {
+            None
+        }
+    }
+
+
+    pub fn get_block(&mut self, id: u64) -> Block {
+        let block = self.get(id).unwrap();
+        let create_time = match block
+            .send
+            .start_time
+            .unwrap()
+            .duration_since(time::SystemTime::UNIX_EPOCH)
+        {
+            Ok(n) => n.as_millis(),
+            Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+        };
+        Block {
+            block_id: id,
+            block_deadline: block.send.deadline,
+            block_priority: block.send.priority,
+            block_create_time: create_time as u64,
+            block_size: block.send.block_size(),
+            remaining_size: block.send.len,
+            depend_id: block.send.depend_id,
+        }
+    }
+
+    /// cancel this block
+    pub fn cancel_block(&mut self, stream_id: u64) -> Result<()> {
+        let stream = self.streams.get_mut(&stream_id).unwrap();
+        // add id into Set of canceled, will send RESET_STREAM of this IDs in
+        // lib::send
+        //self.canceled.insert(stream_id);
+        //self.canceled_depend.insert(stream_id);
+        let (final_size, _) = stream.send.shutdown()?;
+        self.mark_reset(stream_id, true, 0, final_size);
+        //self.canceled.insert(stream_id);
+        // Once shutdown, the stream is guaranteed to be non-writable.
+        self.mark_writable(stream_id, false);
+        //eprintln!("block {} miss deadline, canceled\n", stream_id);
+        //println!("block {} miss deadline, canceled\n", stream_id);
+        //eprintln!(
+        //    "cancel block {},len of streams: {}",
+        //    stream_id,
+        //    self.streams.len()
+        //);
+        Ok(())
+    }
+
+
 
     /// Adds or removes the stream ID to/from the readable streams set.
     ///
@@ -454,6 +613,7 @@ impl StreamMap {
         &mut self, stream_id: u64, reset: bool, error_code: u64, final_size: u64,
     ) {
         if reset {
+            eprintln!("Mark rest block {}, error_code {}, final_size{}", stream_id, error_code, final_size);
             self.reset.insert(stream_id, (error_code, final_size));
         } else {
             self.reset.remove(&stream_id);
@@ -650,7 +810,7 @@ pub struct Stream {
     pub data: Option<Box<dyn std::any::Any + Send + Sync>>,
 
     /// The stream's urgency (lower is better). Default is `DEFAULT_URGENCY`.
-    pub urgency: u8,
+    pub urgency: u64,
 
     /// Whether the stream can be flushed incrementally. Default is `true`.
     pub incremental: bool,
@@ -672,6 +832,23 @@ impl Stream {
             incremental: true,
         }
     }
+
+    /// Creates a new stream with the given flow control limits.
+    pub fn new_full(
+        max_rx_data: u64, max_tx_data: u64, bidi: bool, local: bool,
+        max_window: u64, deadline: u64, priority: u64, depend_id: u64,
+    ) -> Stream {
+        Stream {
+            recv: RecvBuf::new(max_rx_data, max_window),
+            send: SendBuf::new_full(max_tx_data, deadline, priority, depend_id),
+            bidi,
+            local,
+            data: None,
+            urgency: priority,
+            incremental: true,
+        }
+    }
+
 
     /// Returns true if the stream has data to read.
     pub fn is_readable(&self) -> bool {
@@ -815,17 +992,20 @@ impl RecvBuf {
         if let Some(fin_off) = self.fin_off {
             // Stream's size is known, forbid data beyond that point.
             if buf.max_off() > fin_off {
+                eprintln!("buf.max_off() {} > fin_off {}", buf.max_off(), fin_off);
                 return Err(Error::FinalSize);
             }
 
             // Stream's size is already known, forbid changing it.
             if buf.fin() && fin_off != buf.max_off() {
+                eprintln!("buf.fin() && fin_off {} != buf.max_off() {}", fin_off, buf.max_off());
                 return Err(Error::FinalSize);
             }
         }
 
         // Stream's known size is lower than data already received.
         if buf.fin() && buf.max_off() < self.len {
+            eprintln!("buf.fin() && buf.max_off() {} < self.len {}", buf.max_off(), self.len);
             return Err(Error::FinalSize);
         }
 
@@ -902,7 +1082,7 @@ impl RecvBuf {
                     }
                 }
             }
-
+            //eprintln!("recv buf write {} {}", self.len, buf.max_off());
             self.len = cmp::max(self.len, buf.max_off());
 
             if !self.drain {
@@ -971,11 +1151,13 @@ impl RecvBuf {
     pub fn reset(&mut self, error_code: u64, final_size: u64) -> Result<usize> {
         // Stream's size is already known, forbid changing it.
         if let Some(fin_off) = self.fin_off {
+            eprintln!("recv rest fn finoff {}, final size {}", fin_off, final_size);
             if fin_off != final_size {
                 return Err(Error::FinalSize);
             }
         }
 
+        eprintln!("recv rest fn selflen {}, final size {}", self.len, final_size);
         // Stream's known size is lower than data already received.
         if final_size < self.len {
             return Err(Error::FinalSize);
@@ -983,9 +1165,12 @@ impl RecvBuf {
 
         // Calculate how many bytes need to be removed from the connection flow
         // control.
+
         let max_data_delta = final_size - self.len;
+        //let max_data_delta = (final_size).saturating_sub(self.len);
 
         if self.error.is_some() {
+            eprintln!("error is some");
             return Ok(max_data_delta as usize);
         }
 
@@ -1078,7 +1263,7 @@ impl RecvBuf {
 
             None => return false,
         };
-
+        //eprintln!("ready buf not none, buf off {},  self off{}", buf.off(), self.off);
         buf.off() == self.off
     }
 }
@@ -1118,6 +1303,21 @@ pub struct SendBuf {
     /// Whether the stream's send-side has been shut down.
     shutdown: bool,
 
+    /// Deadline
+    deadline: u64,
+
+    /// Priority of this block. The smaller the number, the higher the priority,
+    /// 0 is the highest,
+    priority: u64,
+
+    depend_id: u64,
+    /// Beginning timestamp of the block.
+    start_time: Option<time::SystemTime>,
+
+    /// Beginning Instant of the block, Instant is a monotonically nondecreasing
+    /// clock.
+    start_instant: Option<time::Instant>,
+
     /// Ranges of data offsets that have been acked.
     acked: ranges::RangeSet,
 
@@ -1128,9 +1328,33 @@ pub struct SendBuf {
 impl SendBuf {
     /// Creates a new send buffer.
     fn new(max_data: u64) -> SendBuf {
+        // SendBuf {
+        //     max_data,
+        //     ..SendBuf::default()
+        // }
+        Self::new_full(max_data, MAX_DEADLINE, DEFAULT_PRIORITY, 0)
+    }
+
+    /// Creates a new send buffer with deadline
+    fn new_full(
+        max_data: u64, deadline: u64, priority: u64, depend_id: u64,
+    ) -> SendBuf {
         SendBuf {
             max_data,
+            start_time: Some(time::SystemTime::now()),
+            start_instant: Some(time::Instant::now()),
+            deadline,
+            priority,
+            depend_id,
             ..SendBuf::default()
+        }
+    }
+
+    /// Return block size of this block
+    pub fn block_size(&self) -> u64 {
+        match self.fin_off {
+            Some(v) => v,
+            None => self.off,
         }
     }
 
@@ -1141,11 +1365,10 @@ impl SendBuf {
     /// writes).
     pub fn write(&mut self, mut data: &[u8], mut fin: bool) -> Result<usize> {
         let max_off = self.off + data.len() as u64;
-
         // Get the stream send capacity. This will return an error if the stream
         // was stopped.
         let capacity = self.cap()?;
-
+        //println!("capacity {}", capacity);
         if data.len() > capacity {
             // Truncate the input buffer according to the stream's capacity.
             let len = capacity;
@@ -1153,11 +1376,13 @@ impl SendBuf {
 
             // We are not buffering the full input, so clear the fin flag.
             fin = false;
+            eprintln!("partial write capacity {}", capacity);
         }
-
         if let Some(fin_off) = self.fin_off {
             // Can't write past final offset.
+
             if max_off > fin_off {
+                eprintln!("error0");
                 return Err(Error::FinalSize);
             }
 
@@ -1186,6 +1411,7 @@ impl SendBuf {
 
         // Split the remaining input data into consistently-sized buffers to
         // avoid fragmentation.
+        //println!("fin2 {}", fin);
         for chunk in data.chunks(SEND_BUFFER_SIZE) {
             len += chunk.len();
 
@@ -1198,8 +1424,9 @@ impl SendBuf {
 
             self.off += chunk.len() as u64;
             self.len += chunk.len() as u64;
+            //eprintln!("fin {}, off {}, len {}, max_off {}, cap {}", fin, self.off, self.len, max_off, capacity);
         }
-
+        //eprintln!("off {}, len {} ", self.off, self.len);
         Ok(len)
     }
 
@@ -1378,8 +1605,8 @@ impl SendBuf {
         let unsent_off = self.off_front();
         let unsent_len = self.off_back() - unsent_off;
 
-        self.fin_off = Some(unsent_off);
-
+        //self.fin_off = Some(unsent_off);
+        self.fin_off = Some(self.off_back());
         // Drop all buffered data.
         self.data.clear();
 

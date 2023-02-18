@@ -155,6 +155,12 @@ pub struct Recovery {
     // The maximum size of a data aggregate scheduled and
     // transmitted together.
     send_quantum: usize,
+
+    // BBR state.
+    bbr_state: bbr::State,
+
+    /// How many non-ack-eliciting packets have been sent.
+    outstanding_non_ack_eliciting: usize,
 }
 
 pub struct RecoveryConfig {
@@ -266,6 +272,9 @@ impl Recovery {
 
             #[cfg(feature = "qlog")]
             qlog_metrics: QlogMetrics::default(),
+
+            bbr_state: bbr::State::new(),
+            outstanding_non_ack_eliciting: 0,
         }
     }
 
@@ -340,7 +349,7 @@ impl Recovery {
         self.schedule_next_packet(epoch, now, sent_bytes);
 
         pkt.time_sent = self.get_packet_send_time();
-
+        //eprintln!("send pn {}", pkt_num);
         self.sent[epoch].push_back(pkt);
 
         self.bytes_sent += sent_bytes;
@@ -489,6 +498,7 @@ impl Recovery {
                 });
 
                 trace!("{} packet newly acked {}", trace_id, unacked.pkt_num);
+                //eprintln!("packet newly acked {}", unacked.pkt_num);
             }
         }
 
@@ -500,7 +510,7 @@ impl Recovery {
         if newly_acked.is_empty() {
             return Ok((0, 0));
         }
-
+        //eprintln!("rtt update {}, {}, {}", largest_newly_acked_pkt_num, largest_acked, has_ack_eliciting);
         if largest_newly_acked_pkt_num == largest_acked && has_ack_eliciting {
             // The packet's sent time could be in the future if pacing is used
             // and the network has a very short RTT.
@@ -639,7 +649,7 @@ impl Recovery {
         if self.loss_probes.iter().any(|&x| x > 0) {
             return std::usize::MAX;
         }
-
+        //eprintln!("cwnd available {}, {}, {}", self.cwnd(), self.bytes_in_flight, self.prr.snd_cnt);
         // Open more space (snd_cnt) for PRR when allowed.
         self.congestion_window.saturating_sub(self.bytes_in_flight) +
             self.prr.snd_cnt
@@ -712,8 +722,10 @@ impl Recovery {
                 self.smoothed_rtt = Some(
                     srtt.mul_f64(7.0 / 8.0) + adjusted_rtt.mul_f64(1.0 / 8.0),
                 );
+                //eprintln!("current rtt {}, latest_rtt {}, min_rtt {}, adjusted_rtt {}", self.rtt().as_millis(), self.latest_rtt.as_millis(), self.min_rtt.as_millis(), adjusted_rtt.as_millis());
             },
         }
+
     }
 
     fn loss_time_and_space(&self) -> (Option<Instant>, packet::Epoch) {
@@ -958,6 +970,7 @@ impl Recovery {
         &mut self, lost_bytes: usize, time_sent: Instant, epoch: packet::Epoch,
         now: Instant,
     ) {
+        //eprintln!("congestion event {}", self.cwnd());
         if !self.in_congestion_recovery(time_sent) {
             (self.cc_ops.checkpoint)(self);
         }
@@ -1012,6 +1025,8 @@ pub enum CongestionControlAlgorithm {
     Reno  = 0,
     /// CUBIC congestion control algorithm (default). `cubic` in a string form.
     CUBIC = 1,
+    /// BBR congestion control algorithm. `bbr` in a string form.
+    BBR   = 2,
 }
 
 impl FromStr for CongestionControlAlgorithm {
@@ -1024,6 +1039,7 @@ impl FromStr for CongestionControlAlgorithm {
         match name {
             "reno" => Ok(CongestionControlAlgorithm::Reno),
             "cubic" => Ok(CongestionControlAlgorithm::CUBIC),
+            "bbr" => Ok(CongestionControlAlgorithm::BBR),
 
             _ => Err(crate::Error::CongestionControl),
         }
@@ -1069,6 +1085,7 @@ impl From<CongestionControlAlgorithm> for &'static CongestionControlOps {
         match algo {
             CongestionControlAlgorithm::Reno => &reno::RENO,
             CongestionControlAlgorithm::CUBIC => &cubic::CUBIC,
+            CongestionControlAlgorithm::BBR => &bbr::BBR,
         }
     }
 }
@@ -2088,3 +2105,4 @@ mod hystart;
 mod pacer;
 mod prr;
 mod reno;
+mod bbr;

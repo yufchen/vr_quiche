@@ -494,6 +494,7 @@ int main(int argc, char *argv[]) {
     quiche_config_set_initial_max_stream_data_bidi_remote(config, 1000000);
     quiche_config_set_initial_max_streams_bidi(config, 100);
     quiche_config_set_cc_algorithm(config, QUICHE_CC_RENO);
+    quiche_config_enable_dgram(config, true, 1000, 1000);
 
     struct connections c;
     c.sock = sock;

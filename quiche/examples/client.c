@@ -45,7 +45,7 @@
 #define LOCAL_CONN_ID_LEN 16
 
 #define MAX_DATAGRAM_SIZE 1350
-
+#define GET_BIT(x, bit) ((x >> bit) & 1)
 struct conn_io {
     ev_timer timer;
 
@@ -60,7 +60,15 @@ struct conn_io {
 static void debug_log(const char *line, void *argp) {
     fprintf(stderr, "%s\n", line);
 }
+// get sockaddr, IPv4 or IPv6:
+void *get_in_addr(struct sockaddr *sa)
+{
+    if (sa->sa_family == AF_INET) {
+        return &(((struct sockaddr_in*)sa)->sin_addr);
+    }
 
+    return &(((struct sockaddr_in6*)sa)->sin6_addr);
+}
 static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
     static uint8_t out[MAX_DATAGRAM_SIZE];
 
@@ -70,6 +78,11 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
         ssize_t written = quiche_conn_send(conn_io->conn, out, sizeof(out),
                                            &send_info);
 
+        char s[INET6_ADDRSTRLEN];
+        struct sockaddr * peer_addr = (struct sockaddr *) &send_info.to;
+        inet_ntop(peer_addr->sa_family, get_in_addr((struct sockaddr *)peer_addr),
+                  s, sizeof s);
+        printf("client: connecting to %s\n", s);
         if (written == QUICHE_ERR_DONE) {
             fprintf(stderr, "done writing\n");
             break;
@@ -269,6 +282,7 @@ int main(int argc, char *argv[]) {
     quiche_config_set_initial_max_streams_bidi(config, 100);
     quiche_config_set_initial_max_streams_uni(config, 100);
     quiche_config_set_disable_active_migration(config, true);
+    quiche_config_enable_dgram(config, true, 1000, 1000);
 
     if (getenv("SSLKEYLOGFILE")) {
       quiche_config_log_keys(config);
@@ -305,7 +319,7 @@ int main(int argc, char *argv[]) {
                                        (struct sockaddr *) &conn_io->local_addr,
                                        conn_io->local_addr_len,
                                        peer->ai_addr, peer->ai_addrlen, config);
-
+    printf("peer ai addr %ld\n", sizeof(peer));
     if (conn == NULL) {
         fprintf(stderr, "failed to create connection\n");
         return -1;

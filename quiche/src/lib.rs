@@ -376,6 +376,8 @@ use std::str::FromStr;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
+pub use crate::scheduler::SchedulerType;
+
 /// The current QUIC wire version.
 pub const PROTOCOL_VERSION: u32 = PROTOCOL_VERSION_V1;
 
@@ -522,6 +524,10 @@ pub enum Error {
 
     /// Not enough available identifiers.
     OutOfIdentifiers,
+
+    /// Error in scheduler type
+    SchedulerType,
+
 }
 
 impl Error {
@@ -559,6 +565,7 @@ impl Error {
             Error::StreamReset { .. } => -16,
             Error::IdLimit => -17,
             Error::OutOfIdentifiers => -18,
+            Error::SchedulerType => -19,
         }
     }
 }
@@ -675,6 +682,10 @@ pub struct Config {
     max_stream_window: u64,
 
     disable_dcid_reuse: bool,
+
+    /// Type of the scheduler
+    /// default: scheduler::SchedulerType::Dynamic
+    scheduler_type: scheduler::SchedulerType,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -732,6 +743,8 @@ impl Config {
             max_stream_window: stream::MAX_STREAM_WINDOW,
 
             disable_dcid_reuse: false,
+
+            scheduler_type: SchedulerType::Dynamic, // default scheduler
         })
     }
 
@@ -1062,6 +1075,17 @@ impl Config {
     /// The default value is `CongestionControlAlgorithm::CUBIC`.
     pub fn set_cc_algorithm(&mut self, algo: CongestionControlAlgorithm) {
         self.cc_algorithm = algo;
+    }
+
+
+    pub fn set_scheduler_name(&mut self, name: &str) -> Result<()> {
+        self.scheduler_type = SchedulerType::from_str(name)?;
+
+        Ok(())
+    }
+
+    pub fn set_scheduler_type(&mut self, sche: SchedulerType) {
+        self.scheduler_type = sche;
     }
 
     /// Configures whether to enable HyStart++.
@@ -1602,6 +1626,9 @@ impl Connection {
         let recovery_config = recovery::RecoveryConfig::from_config(config);
 
         let mut path = path::Path::new(local, peer, &recovery_config, true);
+        //eprintln!("peer addr1 {}", path.peer_addr());
+
+
         // If we did stateless retry assume the peer's address is verified.
         path.verified_peer_address = odcid.is_some();
         // Assume clients validate the server's address implicitly.
@@ -1678,6 +1705,7 @@ impl Connection {
                 config.local_transport_params.initial_max_streams_bidi,
                 config.local_transport_params.initial_max_streams_uni,
                 config.max_stream_window,
+                config,
             ),
 
             odcid: None,
@@ -2655,7 +2683,7 @@ impl Connection {
         self.pkt_num_spaces[epoch].recv_pkt_num.insert(pn);
 
         self.pkt_num_spaces[epoch].recv_pkt_need_ack.push_item(pn);
-
+        //eprintln!("push {} to recv_pkt_need_ack", pn);
         self.pkt_num_spaces[epoch].ack_elicited =
             cmp::max(self.pkt_num_spaces[epoch].ack_elicited, ack_elicited);
 
@@ -2989,7 +3017,7 @@ impl Connection {
 
             at: send_path.recovery.get_packet_send_time(),
         };
-
+        //eprintln!("peer addr {}", send_path.peer_addr());
         Ok((done, info))
     }
 
@@ -3294,6 +3322,7 @@ impl Connection {
             !is_closing &&
             self.paths.get(send_pid)?.active()
         {
+            //eprintln!("ACK frame included");
             let ack_delay =
                 self.pkt_num_spaces[epoch].largest_rx_pkt_time.elapsed();
 
@@ -3746,20 +3775,37 @@ impl Connection {
             self.paths.get(send_pid)?.active() &&
             !dgram_emitted
         {
+            // // // log network and cc stats
+            // let rtt = self.paths.get(send_pid)?.recovery.rtt().as_millis() as f64;
+            // let bandwidth = self.paths.get(send_pid)?.recovery.pacer.rate() as f64; // bytes / sec
+            // let now_time_ms = match time::SystemTime::now()
+            //     .duration_since(time::SystemTime::UNIX_EPOCH)
+            // {
+            //     Ok(n) => n.as_millis(),
+            //     Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+            // };
+            // //eprintln!("{} ms; bw: {} Bytes/s; rtt: {} ms; ", now_time_ms, bandwidth, rtt);
+            //
+            // while let Some(stream_id) = self.streams.peek_flushable(
+            //     bandwidth as f64,
+            //     rtt,
+            //     pn, // next_packet_id
+            //     now_time_ms as u64,
+            // ) {
             while let Some(stream_id) = self.streams.pop_flushable() {
                 let stream = match self.streams.get_mut(stream_id) {
-                    Some(v) => v,
-
-                    None => continue,
+                    // Avoid sending frames for streams that were already stopped.
+                    //
+                    // This might happen if stream data was buffered but not yet
+                    // flushed on the wire when a STOP_SENDING frame is received.
+                    Some(v) if !v.send.is_stopped() => v,
+                    _ => {
+                        self.streams.remove_flushable();
+                        continue;
+                    },
                 };
+                //eprintln!("pop flushable stream frame from stream id {}, urgency {}", stream_id, stream.urgency);
 
-                // Avoid sending frames for streams that were already stopped.
-                //
-                // This might happen if stream data was buffered but not yet
-                // flushed on the wire when a STOP_SENDING frame is received.
-                if stream.send.is_stopped() {
-                    continue;
-                }
 
                 let stream_off = stream.send.off_front();
 
@@ -3785,7 +3831,10 @@ impl Connection {
                 let max_len = match left.checked_sub(hdr_len) {
                     Some(v) => v,
 
-                    None => continue,
+                    None => {
+                        self.streams.remove_flushable();
+                        continue;
+                    },
                 };
 
                 let (mut stream_hdr, mut stream_payload) =
@@ -3827,19 +3876,9 @@ impl Connection {
                     has_data = true;
                 }
 
-                // If the stream is still flushable, push it to the back of the
-                // queue again.
-                if stream.is_flushable() {
-                    let urgency = stream.urgency;
-                    let incremental = stream.incremental;
-                    self.streams.push_flushable(stream_id, urgency, incremental);
-                }
-
-                // When fuzzing, try to coalesce multiple STREAM frames in the
-                // same packet, so it's easier to generate fuzz corpora.
-                if cfg!(feature = "fuzzing") && left > frame::MAX_STREAM_OVERHEAD
-                {
-                    continue;
+                // If the stream is no longer flushable, remove it from the queue
+                if !stream.is_flushable() {
+                    self.streams.remove_flushable();
                 }
 
                 break;
@@ -4273,6 +4312,20 @@ impl Connection {
     pub fn stream_send(
         &mut self, stream_id: u64, buf: &[u8], fin: bool,
     ) -> Result<usize> {
+        self.stream_send_full(
+            stream_id,
+            buf,
+            fin,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            stream_id, // default: no depend
+        )
+    }
+
+    pub fn stream_send_full(
+        &mut self, stream_id: u64, buf: &[u8], fin: bool, deadline: u64,
+        priority: u64, depend_id: u64,
+    ) -> Result<usize> {
         // We can't write on the peer's unidirectional streams.
         if !stream::is_bidi(stream_id) &&
             !stream::is_local(stream_id, self.is_server)
@@ -4286,6 +4339,7 @@ impl Connection {
         // Note that this is separate from "send capacity" as that also takes
         // congestion control into consideration.
         if self.max_tx_data - self.tx_data < buf.len() as u64 {
+            eprintln!("congestion control into consideration {}, {}, {}", self.max_tx_data, self.tx_data, buf.len());
             self.blocked_limit = Some(self.max_tx_data);
         }
 
@@ -4298,15 +4352,14 @@ impl Connection {
         if cap == 0 && !(fin && buf.is_empty()) {
             return Err(Error::Done);
         }
-
+        //eprintln!("fin {} cap {} buflen {}", fin, cap, buf.len());
         let (buf, fin) = if cap < buf.len() {
             (&buf[..cap], false)
         } else {
             (buf, fin)
         };
-
         // Get existing stream or create a new one.
-        let stream = self.get_or_create_stream(stream_id, true)?;
+        let stream = self.get_or_create_stream_full(stream_id, true, deadline, priority, depend_id,)?;
 
         #[cfg(feature = "qlog")]
         let offset = stream.send.off_back();
@@ -4318,9 +4371,11 @@ impl Connection {
 
             Err(e) => {
                 self.streams.mark_writable(stream_id, false);
+                println!("error2");
                 return Err(e);
             },
         };
+        //eprintln!("sent size {}, {}", sent, buf.len());
 
         let urgency = stream.urgency;
         let incremental = stream.incremental;
@@ -4375,6 +4430,7 @@ impl Connection {
         });
 
         if sent == 0 && !buf.is_empty() {
+            println!("error3");
             return Err(Error::Done);
         }
 
@@ -4390,7 +4446,7 @@ impl Connection {
     /// The target stream is created if it did not exist before calling this
     /// method.
     pub fn stream_priority(
-        &mut self, stream_id: u64, urgency: u8, incremental: bool,
+        &mut self, stream_id: u64, urgency: u64, incremental: bool,
     ) -> Result<()> {
         // Get existing stream or create a new one, but if the stream
         // has already been closed and collected, ignore the prioritization.
@@ -6032,12 +6088,29 @@ impl Connection {
     fn get_or_create_stream(
         &mut self, id: u64, local: bool,
     ) -> Result<&mut stream::Stream> {
+        self.get_or_create_stream_full(
+            id,
+            local,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            id,
+        )
+    }
+
+    /// Create stream with deadline and priority.
+    fn get_or_create_stream_full(
+        &mut self, id: u64, local: bool, deadline: u64, priority: u64,
+        depend_id: u64,
+    ) -> Result<&mut stream::Stream> {
         self.streams.get_or_create(
             id,
             &self.local_transport_params,
             &self.peer_transport_params,
             local,
             self.is_server,
+            deadline,
+            priority,
+            depend_id,
         )
     }
 
@@ -6047,7 +6120,7 @@ impl Connection {
         recv_path_id: usize, epoch: packet::Epoch, now: time::Instant,
     ) -> Result<()> {
         trace!("{} rx frm {:?}", self.trace_id, frame);
-
+        //eprintln!("rx frm {:?}", frame);
         match frame {
             frame::Frame::Padding { .. } => (),
 
@@ -6091,7 +6164,7 @@ impl Connection {
                         now,
                         &self.trace_id,
                     )?;
-
+                    //eprintln!("on ack received");
                     self.lost_count += lost_packets;
                     self.lost_bytes += lost_bytes as u64;
                 }
@@ -6132,7 +6205,7 @@ impl Connection {
 
                     Err(e) => return Err(e),
                 };
-
+                eprintln!("Reset frame stream id {}", stream_id);
                 let was_readable = stream.is_readable();
 
                 let max_off_delta =
@@ -6145,7 +6218,7 @@ impl Connection {
                 if !was_readable && stream.is_readable() {
                     self.streams.mark_readable(stream_id, true);
                 }
-
+                self.streams.mark_readable(stream_id, true);
                 self.rx_data += max_off_delta;
             },
 
@@ -6251,7 +6324,7 @@ impl Connection {
 
                     Err(e) => return Err(e),
                 };
-
+                //eprintln!("stream Frame id {} ", stream_id);
                 // Check for the connection-level flow control limit.
                 let max_off_delta =
                     data.max_off().saturating_sub(stream.recv.max_off());
@@ -6585,9 +6658,12 @@ impl Connection {
             Ok(p) => p.recovery.cwnd_available() as u64,
             Err(_) => 0,
         };
+        //println!("tx_cap0 {}, cwin_available {}, max {}, cur {}", self.tx_cap, cwin_available, self.max_tx_data, self.tx_data);
+        //self.tx_cap =
+        //    cmp::min(cwin_available, self.max_tx_data - self.tx_data) as usize;
 
-        self.tx_cap =
-            cmp::min(cwin_available, self.max_tx_data - self.tx_data) as usize;
+        self.tx_cap = (self.max_tx_data - self.tx_data) as usize;
+        //println!("tx_cap1 {}", self.tx_cap);
     }
 
     fn delivery_rate_check_if_app_limited(&self) -> bool {
@@ -14480,3 +14556,4 @@ mod ranges;
 mod recovery;
 mod stream;
 mod tls;
+mod scheduler;

@@ -162,7 +162,7 @@ impl Rate {
         self.end_of_app_limited != 0
     }
 
-    pub fn _delivered(&self) -> usize {
+    pub fn delivered(&self) -> usize {
         self.delivered
     }
 
@@ -170,11 +170,11 @@ impl Rate {
         self.rate_sample.delivery_rate
     }
 
-    pub fn _sample_rtt(&self) -> Duration {
+    pub fn sample_rtt(&self) -> Duration {
         self.rate_sample.rtt
     }
 
-    pub fn _sample_is_app_limited(&self) -> bool {
+    pub fn sample_is_app_limited(&self) -> bool {
         self.rate_sample.is_app_limited
     }
 }

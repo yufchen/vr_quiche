@@ -1024,7 +1024,7 @@ impl Connection {
             .clamp(PRIORITY_URGENCY_LOWER_BOUND, PRIORITY_URGENCY_UPPER_BOUND) +
             PRIORITY_URGENCY_OFFSET;
 
-        conn.stream_priority(stream_id, urgency, priority.incremental)?;
+        conn.stream_priority(stream_id, urgency.into(), priority.incremental)?;
 
         self.send_headers(conn, stream_id, headers, fin)?;
 
