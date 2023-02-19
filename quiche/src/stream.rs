@@ -408,8 +408,8 @@ impl StreamMap {
                 // stream to the end of the queue so they are pocesses in a round
                 // robin fashion
                 if let Some(current_incremental) = queues.1.pop_front() {
-                    //queues.1.push_back(current_incremental); //Round robin
-                    queues.1.push_front(current_incremental); //FIFO
+                    queues.1.push_back(current_incremental); //Round robin
+                    //queues.1.push_front(current_incremental); //FIFO
                     Some(current_incremental)
                 } else {
                     None
@@ -482,22 +482,22 @@ impl StreamMap {
                     None
                 } else {
                     let b_id = self.scheduler.select_block(
-                                                       &mut blocks_vec,
-                                                       bandwidth,
-                                                       rtt,
-                                                       next_packet_id,
-                                                       current_time,
-                                                   );
+                        &mut blocks_vec,
+                        bandwidth,
+                        rtt,
+                        next_packet_id,
+                        current_time,
+                    );
                     let best_block_id = Some(b_id);
                     //eprintln!("best_block_id: {}", b_id);
                     // pop(return and remove) highest_stream_id
-                    // for i in 0..queues.1.len() {
-                    //     let &id = queues.1.get(i).unwrap();
-                    //     if Some(id) == best_block_id {
-                    //         queues.1.swap_remove_front(i);
-                    //         break;
-                    //     }
-                    // }
+                    for i in 0..queues.1.len() {
+                        let &id = queues.1.get(i).unwrap();
+                        if Some(id) == best_block_id {
+                            queues.1.swap(i, 0);
+                            break;
+                        }
+                    }
                     best_block_id
                 }
             };
@@ -509,7 +509,6 @@ impl StreamMap {
             None
         }
     }
-
 
     pub fn get_block(&mut self, id: u64) -> Block {
         let block = self.get(id).unwrap();
