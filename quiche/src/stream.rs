@@ -467,13 +467,13 @@ impl StreamMap {
                     // create block structure for C++
                     let block = self.get_block(id);
                     //eprintln!("{} ms, block in queue: id {}", current_time, block.block_id);
-                    if self.scheduler.should_drop_block(&block, bandwidth, rtt, next_packet_id, current_time) {
-                        self.cancel_block(id).ok()?;
-                        // Block canceled, so non-flushable
-                        eprintln!("drop block: {}", id);
-                        queues.1.swap_remove_back(i);
-                        continue;
-                    }
+                    // if self.scheduler.should_drop_block(&block, bandwidth, rtt, next_packet_id, current_time) {
+                    //     self.cancel_block(id).ok()?;
+                    //     // Block canceled, so non-flushable
+                    //     eprintln!("drop block: {}", id);
+                    //     queues.1.swap_remove_back(i);
+                    //     continue;
+                    // }
                     // add the block struct to blocks, and used by C++ code later
                     blocks_vec.push(block);
                 }
@@ -844,7 +844,7 @@ impl Stream {
             bidi,
             local,
             data: None,
-            urgency: priority,
+            urgency: DEFAULT_URGENCY,
             incremental: true,
         }
     }

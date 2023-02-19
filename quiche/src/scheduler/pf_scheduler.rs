@@ -19,7 +19,7 @@ impl Default for PFScheduler {
             size: 0,
             prio: 999999999, // lowest priority
             last_block_id: None,
-            max_prio: 2,
+            max_prio: 3,
             alpha: 0.5,
             beta: 100000.0,
             canceled: Vec::new(),
@@ -74,10 +74,10 @@ impl Scheduler for PFScheduler {
             let block = &blocks_vec[i];
             if block.remaining_size > 0 {
                 //dependency
-                if (block.block_id != block.depend_id) && block_id_vec.contains(&block.depend_id) {
-                    eprintln!("{} ms, dtp skip block {}:  depend_id {}", current_time, block.block_id, block.depend_id);
-                    continue;
-                }
+                // if (block.block_id != block.depend_id) && block_id_vec.contains(&block.depend_id) {
+                //     eprintln!("{} ms, dtp skip block {}:  depend_id {}", current_time, block.block_id, block.depend_id);
+                //     continue;
+                // }
 
 
                 let tempddl = block.block_deadline;

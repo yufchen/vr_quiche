@@ -614,13 +614,13 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                         if (gl_app_type == APP_SYNTHETIC_DATA) {
                             //TODO: send same data on different streams
                             int cur_stream_id = 9;
-                            static uint8_t foo_buffer[50000]; //50MB
-                            int data_len_per_stream = 50000 / gl_num_streams;
+                            static uint8_t foo_buffer[100]; //50MB
+                            int data_len_per_stream = 100 / gl_num_streams;
                             for (int k = 1; k <= 3; k++) { // k: current urgency level
                                 for (int i = 0; i < gl_num_streams; i++) {
                                     int size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id,
                                                                             foo_buffer, data_len_per_stream, true, 0,
-                                                                            k, 0);
+                                                                            k, cur_stream_id);
                                     //int size = quiche_conn_stream_send(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true);
                                     if (gl_if_debug) {
                                         fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n",
@@ -927,8 +927,8 @@ int main(int argc, char *argv[]) {
     //quiche_config_set_cc_algorithm(gl_config, QUICHE_CC_RENO);
     quiche_config_set_cc_algorithm(gl_config, QUICHE_CC_BBR);
     quiche_config_enable_dgram(gl_config, true, 1000, 1000);
-    //quiche_config_set_scheduler_name(gl_config, "Basic");
-    //quiche_config_set_scheduler_name(gl_config, "PF");
+    //quiche_config_set_scheduler_name(gl_config, "DTP");
+    quiche_config_set_scheduler_name(gl_config, "DTP");
     //!!! only use one connection here
     struct connections c;
     c.sock = sock;

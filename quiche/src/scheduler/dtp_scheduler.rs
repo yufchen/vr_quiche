@@ -16,7 +16,7 @@ impl Default for DtpScheduler {
             size: 0,
             prio: 999999999, // lowest priority
             last_block_id: None,
-            max_prio: 2,
+            max_prio: 3,
         }
     }
 }
@@ -79,35 +79,55 @@ impl Scheduler for DtpScheduler {
                 let one_way_delay = rtt / 2.0;
                 let tempsize = block.remaining_size;
 
-                let remaining_time: f64 = tempddl as f64 - passed_time as f64 - one_way_delay - ((tempsize as f64 / pacing_rate) * 1000.0); // Bytes / (B/s) * 1000. (ms)
-                eprintln!("{} ms dtp scheduler: block_id {}, tempddl: {}, passed_time: {}, one_way_delay: {}, tempsize: {}, pacing_rate: {}, remaining_time: {}",
-                    current_time, block.block_id, tempddl, passed_time, one_way_delay, tempsize, pacing_rate, remaining_time);
+                // let remaining_time: f64 = tempddl as f64 - passed_time as f64 - one_way_delay - ((tempsize as f64 / pacing_rate) * 1000.0); // Bytes / (B/s) * 1000. (ms)
+                // eprintln!("{} ms dtp scheduler: block_id {}, tempddl: {}, passed_time: {}, one_way_delay: {}, tempsize: {}, pacing_rate: {}, remaining_time: {}",
+                //     current_time, block.block_id, tempddl, passed_time, one_way_delay, tempsize, pacing_rate, remaining_time);
 
-                if remaining_time >= 0.0 {
-                    let tempprio = block.block_priority;
-                    let unsent_ratio = tempsize as f64 / block.block_size as f64;
-                    let remaining_time_weight = remaining_time / tempddl as f64;
+                // if remaining_time >= 0.0 {
+                //     let tempprio = block.block_priority;
+                //     let unsent_ratio = tempsize as f64 / block.block_size as f64;
+                //     let remaining_time_weight = remaining_time / tempddl as f64;
+                //
+                //     //let weight: f64 = (1.0 * remaining_time / tempddl as f64) / (1.0 - tempprio as f64 / self.max_prio as f64);
+                //     let weight: f64 = (((1.0 - 0.5) * remaining_time_weight) +
+                //                     0.5 * tempprio as f64 / self.max_prio as f64) * unsent_ratio;
+                //     eprintln!("{} ms, dtp consider block {}: weight {}, remain_time {}, prior {}/{}, ddl {} depend_id {}", current_time, block.block_id,  weight, remaining_time, tempprio, self.max_prio, tempddl, block.depend_id);
+                //     if min_weight_block_id == -1 ||
+                //         min_weight > weight ||
+                //         (min_weight == weight && block.remaining_size < blocks_vec[min_weight_block_id as usize].remaining_size)
+                //     {
+                //         min_weight_block_id = i as i32;
+                //         min_weight = weight;
+                //         ddl = block.block_deadline;
+                //         size = block.remaining_size;
+                //         prio = block.block_priority;
+                //
+                //     }
+                // }
+                //
 
-                    //let weight: f64 = (1.0 * remaining_time / tempddl as f64) / (1.0 - tempprio as f64 / self.max_prio as f64);
-                    let weight: f64 = (((1.0 - 0.5) * remaining_time_weight) +
-                                    0.5 * tempprio as f64 / self.max_prio as f64) * unsent_ratio;
-                    eprintln!("{} ms, dtp consider block {}: weight {}, remain_time {}, prior {}/{}, ddl {} depend_id {}", current_time, block.block_id,  weight, remaining_time, tempprio, self.max_prio, tempddl, block.depend_id);
-                    if min_weight_block_id == -1 ||
-                        min_weight > weight ||
-                        (min_weight == weight && block.remaining_size < blocks_vec[min_weight_block_id as usize].remaining_size)
-                    {
-                        min_weight_block_id = i as i32;
-                        min_weight = weight;
-                        ddl = block.block_deadline;
-                        size = block.remaining_size;
-                        prio = block.block_priority;
+                //DTP-P no ddl at all
+                let tempprio = block.block_priority;
+                let unsent_ratio = tempsize as f64 / block.block_size as f64;
+                let weight: f64 = (tempprio as f64 / self.max_prio as f64) * unsent_ratio;
+                eprintln!("{} ms, dtp consider block {}: weight {}, prior {}/{}", current_time, block.block_id,  weight, tempprio, self.max_prio);
+                if min_weight_block_id == -1 ||
+                    min_weight > weight ||
+                    (min_weight == weight && block.remaining_size < blocks_vec[min_weight_block_id as usize].remaining_size)
+                {
+                    min_weight_block_id = i as i32;
+                    min_weight = weight;
+                    ddl = block.block_deadline;
+                    size = block.remaining_size;
+                    prio = block.block_priority;
 
-                    }
                 }
+
+
             }
         }
 
-        if min_weight_block_id == -1 {
+/*        if min_weight_block_id == -1 {
             for i in 0..blocks_vec.len() {
                 let block = &blocks_vec[i];
                 if block.remaining_size > 0 {
@@ -148,7 +168,7 @@ impl Scheduler for DtpScheduler {
                     }
                 }
             }
-        }
+        }*/
 
 
 

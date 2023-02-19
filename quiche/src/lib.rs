@@ -3776,23 +3776,23 @@ impl Connection {
             !dgram_emitted
         {
             // // // log network and cc stats
-            // let rtt = self.paths.get(send_pid)?.recovery.rtt().as_millis() as f64;
-            // let bandwidth = self.paths.get(send_pid)?.recovery.pacer.rate() as f64; // bytes / sec
-            // let now_time_ms = match time::SystemTime::now()
-            //     .duration_since(time::SystemTime::UNIX_EPOCH)
-            // {
-            //     Ok(n) => n.as_millis(),
-            //     Err(_) => panic!("SystemTime before UNIX EPOCH!"),
-            // };
-            // //eprintln!("{} ms; bw: {} Bytes/s; rtt: {} ms; ", now_time_ms, bandwidth, rtt);
-            //
-            // while let Some(stream_id) = self.streams.peek_flushable(
-            //     bandwidth as f64,
-            //     rtt,
-            //     pn, // next_packet_id
-            //     now_time_ms as u64,
-            // ) {
-            while let Some(stream_id) = self.streams.pop_flushable() {
+            let rtt = self.paths.get(send_pid)?.recovery.rtt().as_millis() as f64;
+            let bandwidth = self.paths.get(send_pid)?.recovery.pacer.rate() as f64; // bytes / sec
+            let now_time_ms = match time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
+            {
+                Ok(n) => n.as_millis(),
+                Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+            };
+            //eprintln!("{} ms; bw: {} Bytes/s; rtt: {} ms; ", now_time_ms, bandwidth, rtt);
+
+            while let Some(stream_id) = self.streams.peek_flushable(
+                bandwidth as f64,
+                rtt,
+                pn, // next_packet_id
+                now_time_ms as u64,
+            ) {
+            //while let Some(stream_id) = self.streams.pop_flushable() {
                 let stream = match self.streams.get_mut(stream_id) {
                     // Avoid sending frames for streams that were already stopped.
                     //
