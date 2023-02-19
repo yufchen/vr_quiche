@@ -614,8 +614,8 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                         if (gl_app_type == APP_SYNTHETIC_DATA) {
                             //TODO: send same data on different streams
                             int cur_stream_id = 9;
-                            static uint8_t foo_buffer[100]; //50MB
-                            int data_len_per_stream = 100 / gl_num_streams;
+                            static uint8_t foo_buffer[50000000]; //50MB
+                            int data_len_per_stream = 50000000 / gl_num_streams;
                             for (int k = 1; k <= 3; k++) { // k: current urgency level
                                 for (int i = 0; i < gl_num_streams; i++) {
                                     int size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id,

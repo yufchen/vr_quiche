@@ -68,10 +68,10 @@ impl Scheduler for DtpScheduler {
             let block = &blocks_vec[i];
             if block.remaining_size > 0 {
                 //dependency
-                if (block.block_id != block.depend_id) && block_id_vec.contains(&block.depend_id) {
-                    eprintln!("{} ms, dtp skip block {}:  depend_id {}", current_time, block.block_id, block.depend_id);
-                    continue;
-                }
+                // if (block.block_id != block.depend_id) && block_id_vec.contains(&block.depend_id) {
+                //     eprintln!("{} ms, dtp skip block {}:  depend_id {}", current_time, block.block_id, block.depend_id);
+                //     continue;
+                // }
 
 
                 let tempddl = block.block_deadline;
@@ -110,7 +110,7 @@ impl Scheduler for DtpScheduler {
                 let tempprio = block.block_priority;
                 let unsent_ratio = tempsize as f64 / block.block_size as f64;
                 let weight: f64 = (tempprio as f64 / self.max_prio as f64) * unsent_ratio;
-                eprintln!("{} ms, dtp consider block {}: weight {}, prior {}/{}", current_time, block.block_id,  weight, tempprio, self.max_prio);
+                //eprintln!("{} ms, dtp consider block {}: weight {}, prior {}/{}", current_time, block.block_id,  weight, tempprio, self.max_prio);
                 if min_weight_block_id == -1 ||
                     min_weight > weight ||
                     (min_weight == weight && block.remaining_size < blocks_vec[min_weight_block_id as usize].remaining_size)
@@ -178,7 +178,7 @@ impl Scheduler for DtpScheduler {
 
         if min_weight_block_id != -1 {
             self.last_block_id = Some(blocks_vec[min_weight_block_id as usize].block_id) ;
-            eprintln!("!= -1 {}", blocks_vec[min_weight_block_id as usize].block_id);
+            //eprintln!("!= -1 {}", blocks_vec[min_weight_block_id as usize].block_id);
             return blocks_vec[min_weight_block_id as usize].block_id;
         } else {
             //self.last_block_id = Some(blocks_vec[0].block_id);
@@ -186,7 +186,7 @@ impl Scheduler for DtpScheduler {
             //return blocks_vec[0].block_id;
 
             //BUG?
-            eprintln!("==-1 {}",  self.last_block_id.unwrap());
+            //eprintln!("==-1 {}",  self.last_block_id.unwrap());
             return self.last_block_id.unwrap();
         }
     }

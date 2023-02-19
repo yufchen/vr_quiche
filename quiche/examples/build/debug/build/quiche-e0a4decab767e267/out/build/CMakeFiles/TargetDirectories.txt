@@ -1,0 +1,5 @@
+/home/cyf/VR/quiche_origin/quiche/quiche/examples/build/debug/build/quiche-e0a4decab767e267/out/build/CMakeFiles/rebuild_cache.dir
+/home/cyf/VR/quiche_origin/quiche/quiche/examples/build/debug/build/quiche-e0a4decab767e267/out/build/CMakeFiles/edit_cache.dir
+/home/cyf/VR/quiche_origin/quiche/quiche/examples/build/debug/build/quiche-e0a4decab767e267/out/build/CMakeFiles/bssl.dir
+/home/cyf/VR/quiche_origin/quiche/quiche/examples/build/debug/build/quiche-e0a4decab767e267/out/build/CMakeFiles/ssl.dir
+/home/cyf/VR/quiche_origin/quiche/quiche/examples/build/debug/build/quiche-e0a4decab767e267/out/build/CMakeFiles/crypto.dir
