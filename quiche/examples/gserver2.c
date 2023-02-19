@@ -613,28 +613,23 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                         // For SYN APP
                         if (gl_app_type == APP_SYNTHETIC_DATA) {
                             //TODO: send same data on different streams
-                            static uint8_t foo_buffer[30000];
-                            quiche_conn_stream_send(gl_recv_conn_io->conn, 9, foo_buffer, 30000, true);
-
-//                            int cur_stream_id = 9;
-//                            //int urgency = 1;
-//                            //int cnt = 0;
-//                            static uint8_t foo_buffer[SYNTHETIC_DATA_LEN];
-//                            int data_len_per_stream = SYNTHETIC_DATA_LEN / gl_num_streams;
-//                            for (int i = 0; i < gl_num_streams; i++) {
-//                                //int size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, 100000, true, 0, urgency, 0);
-//                                int size = quiche_conn_stream_send(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true);
-//                                if (gl_if_debug) {
-//                                    fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d\n", getcurTime(),
-//                                            size, data_len_per_stream, cur_stream_id);
-//                                }
-//                                cur_stream_id += 4;
-////                                cnt += 1;
-////                                if (cnt == gl_urgency_step){
-////                                    cnt = 0;
-////                                    urgency += 1;
-////                                }
-                            //}
+                            int cur_stream_id = 9;
+                            static uint8_t foo_buffer[50000]; //50MB
+                            int data_len_per_stream = 50000 / gl_num_streams;
+                            for (int k = 1; k <= 3; k++) { // k: current urgency level
+                                for (int i = 0; i < gl_num_streams; i++) {
+                                    int size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id,
+                                                                            foo_buffer, data_len_per_stream, true, 0,
+                                                                            k, 0);
+                                    //int size = quiche_conn_stream_send(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true);
+                                    if (gl_if_debug) {
+                                        fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n",
+                                                getcurTime(),
+                                                size, data_len_per_stream, cur_stream_id, k);
+                                    }
+                                    cur_stream_id += 4;
+                                }
+                            }
                         }
                         else if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                             int cur_stream_id = 44009;
