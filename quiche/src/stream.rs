@@ -398,8 +398,8 @@ impl StreamMap {
                 // stream to the end of the queue so they are pocesses in a round
                 // robin fashion
                 if let Some(current_incremental) = queues.1.pop_front() {
-                    queues.1.push_back(current_incremental); //Round robin
-                    //queues.1.push_front(current_incremental); //FIFO
+                    //queues.1.push_back(current_incremental); //Round robin
+                    queues.1.push_front(current_incremental); //FIFO
                     Some(current_incremental)
                 } else {
                     None
@@ -415,8 +415,8 @@ impl StreamMap {
             .first_entry()
             .expect("Remove previously peeked stream");
         let queues = top_urgency.get_mut();
-        queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_back()); //Round robin
-        //queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_front()); //FIFO
+        //queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_back()); //Round robin
+        queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_front()); //FIFO
         // Remove the queue from the list of queues if it is now empty, so that
         // the next time `pop_flushable()` is called the next queue with elements
         // is used.
