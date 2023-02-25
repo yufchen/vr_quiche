@@ -3891,8 +3891,9 @@ impl Connection {
         }
 
         // Alternate trying to send DATAGRAMs next time.
-        self.emit_dgram = (!dgram_emitted || (dgram_send != 0));
-
+        unsafe {
+            self.emit_dgram = (!dgram_emitted || (my_dgram_send_times != 0));
+        }
         // Create PING for PTO probe if no other ack-eliciting frame is sent.
         if self.paths.get(send_pid)?.recovery.loss_probes[epoch] > 0 &&
             !ack_eliciting &&
