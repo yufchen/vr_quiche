@@ -439,7 +439,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                             int size = quiche_conn_stream_send_full(conn_io->conn, cur_stream_id,
                                                             foo_buffer, data_len_per_stream, true, 0,
                                                             k, cur_stream_id);
-                            fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n", getcurTime(), size, data_len_per_stream, cur_stream_id, k);
+                            //fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n", getcurTime(), size, data_len_per_stream, cur_stream_id, k);
                             cur_stream_id += 4;
                         }
                     }
