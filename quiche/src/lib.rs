@@ -378,6 +378,8 @@ use std::collections::VecDeque;
 
 pub use crate::scheduler::SchedulerType;
 
+static mut my_dgram_send_times: i64 = 0;
+
 /// The current QUIC wire version.
 pub const PROTOCOL_VERSION: u32 = PROTOCOL_VERSION_V1;
 
@@ -3670,6 +3672,9 @@ impl Connection {
                     ack_eliciting = true;
                     in_flight = true;
                     has_data = true;
+                    unsafe {
+                        my_dgram_send_times = (my_dgram_send_times + 1) % 1;
+                    }
                 }
             }
         }
@@ -3886,7 +3891,7 @@ impl Connection {
         }
 
         // Alternate trying to send DATAGRAMs next time.
-        self.emit_dgram = !dgram_emitted;
+        self.emit_dgram = (!dgram_emitted || (dgram_send != 0));
 
         // Create PING for PTO probe if no other ack-eliciting frame is sent.
         if self.paths.get(send_pid)?.recovery.loss_probes[epoch] > 0 &&
@@ -6659,10 +6664,10 @@ impl Connection {
             Err(_) => 0,
         };
         //println!("tx_cap0 {}, cwin_available {}, max {}, cur {}", self.tx_cap, cwin_available, self.max_tx_data, self.tx_data);
-        //self.tx_cap =
-        //    cmp::min(cwin_available, self.max_tx_data - self.tx_data) as usize;
+        self.tx_cap =
+            cmp::min(cwin_available, self.max_tx_data - self.tx_data) as usize;
 
-        self.tx_cap = (self.max_tx_data - self.tx_data) as usize;
+        //self.tx_cap = (self.max_tx_data - self.tx_data) as usize;
         //println!("tx_cap1 {}", self.tx_cap);
     }
 

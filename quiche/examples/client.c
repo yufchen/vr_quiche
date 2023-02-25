@@ -45,7 +45,9 @@
 #define LOCAL_CONN_ID_LEN 16
 
 #define MAX_DATAGRAM_SIZE 1350
-#define GET_BIT(x, bit) ((x >> bit) & 1)
+
+FILE *fp = NULL;
+
 struct conn_io {
     ev_timer timer;
 
@@ -60,15 +62,7 @@ struct conn_io {
 static void debug_log(const char *line, void *argp) {
     fprintf(stderr, "%s\n", line);
 }
-// get sockaddr, IPv4 or IPv6:
-void *get_in_addr(struct sockaddr *sa)
-{
-    if (sa->sa_family == AF_INET) {
-        return &(((struct sockaddr_in*)sa)->sin_addr);
-    }
 
-    return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}
 static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
     static uint8_t out[MAX_DATAGRAM_SIZE];
 
@@ -78,13 +72,8 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
         ssize_t written = quiche_conn_send(conn_io->conn, out, sizeof(out),
                                            &send_info);
 
-        char s[INET6_ADDRSTRLEN];
-        struct sockaddr * peer_addr = (struct sockaddr *) &send_info.to;
-        inet_ntop(peer_addr->sa_family, get_in_addr((struct sockaddr *)peer_addr),
-                  s, sizeof s);
-        printf("client: connecting to %s\n", s);
         if (written == QUICHE_ERR_DONE) {
-            fprintf(stderr, "done writing\n");
+            //fprintf(stderr, "done writing\n");
             break;
         }
 
@@ -102,7 +91,7 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
             return;
         }
 
-        fprintf(stderr, "sent %zd bytes\n", sent);
+        //fprintf(stderr, "sent %zd bytes\n", sent);
     }
 
     double t = quiche_conn_timeout_as_nanos(conn_io->conn) / 1e9f;
@@ -128,7 +117,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
 
         if (read < 0) {
             if ((errno == EWOULDBLOCK) || (errno == EAGAIN)) {
-                fprintf(stderr, "recv would block\n");
+                //fprintf(stderr, "recv would block\n");
                 break;
             }
 
@@ -151,10 +140,10 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
             continue;
         }
 
-        fprintf(stderr, "recv %zd bytes\n", done);
+        //fprintf(stderr, "recv %zd bytes\n", done);
     }
 
-    fprintf(stderr, "done reading\n");
+    //fprintf(stderr, "done reading\n");
 
     if (quiche_conn_is_closed(conn_io->conn)) {
         fprintf(stderr, "connection closed\n");
@@ -172,16 +161,18 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
         fprintf(stderr, "connection established: %.*s\n",
                 (int) app_proto_len, app_proto);
 
-        const static uint8_t r[] = "GET /index.html\r\n";
-        if (quiche_conn_stream_send(conn_io->conn, 4, r, sizeof(r), true) < 0) {
+        const static uint8_t r[] = "Hello world\n";
+	
+	    if (quiche_conn_stream_send(conn_io->conn, 4, r, sizeof(r), true) < 0) {
             fprintf(stderr, "failed to send HTTP request\n");
             return;
         }
 
-        fprintf(stderr, "sent HTTP request\n");
+	    fprintf(stderr, "sent HTTP request\n");
 
         req_sent = true;
     }
+
 
     if (quiche_conn_is_established(conn_io->conn)) {
         uint64_t s = 0;
@@ -189,7 +180,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
         quiche_stream_iter *readable = quiche_conn_readable(conn_io->conn);
 
         while (quiche_stream_iter_next(readable, &s)) {
-            fprintf(stderr, "stream %" PRIu64 " is readable\n", s);
+            //fprintf(stderr, "stream %" PRIu64 " is readable\n", s);
 
             bool fin = false;
             ssize_t recv_len = quiche_conn_stream_recv(conn_io->conn, s,
@@ -199,7 +190,6 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                 break;
             }
 
-            printf("%.*s", (int) recv_len, buf);
 
             if (fin) {
                 if (quiche_conn_close(conn_io->conn, true, 0, NULL, 0) < 0) {
@@ -207,8 +197,13 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                 }
             }
         }
-
         quiche_stream_iter_free(readable);
+
+        if (quiche_conn_is_readable(conn_io->conn)) {
+            ssize_t recv_dgram_len = quiche_conn_dgram_recv(conn_io->conn, buf, sizeof(buf));
+
+        }
+
     }
 
     flush_egress(loop, conn_io);
@@ -227,8 +222,8 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
 
         quiche_conn_stats(conn_io->conn, &stats);
 
-        fprintf(stderr, "connection closed, recv=%zu sent=%zu lost=%zu rtt=%" PRIu64 "ns\n",
-                stats.recv, stats.sent, stats.lost, stats.paths[0].rtt);
+        fprintf(stderr, "connection closed, recv=%zu sent=%zu lost=%zu" PRIu64 "ns\n",
+                stats.recv, stats.sent, stats.lost);
 
         ev_break(EV_A_ EVBREAK_ONE);
         return;
@@ -245,7 +240,7 @@ int main(int argc, char *argv[]) {
         .ai_protocol = IPPROTO_UDP
     };
 
-    quiche_enable_debug_logging(debug_log, NULL);
+    //quiche_enable_debug_logging(debug_log, NULL);
 
     struct addrinfo *peer;
     if (getaddrinfo(host, port, &hints, &peer) != 0) {
@@ -319,11 +314,13 @@ int main(int argc, char *argv[]) {
                                        (struct sockaddr *) &conn_io->local_addr,
                                        conn_io->local_addr_len,
                                        peer->ai_addr, peer->ai_addrlen, config);
-    printf("peer ai addr %ld\n", sizeof(peer));
+
     if (conn == NULL) {
         fprintf(stderr, "failed to create connection\n");
         return -1;
     }
+
+    fp = fopen(argv[3], "w");
 
     conn_io->sock = sock;
     conn_io->conn = conn;
@@ -351,3 +348,4 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+

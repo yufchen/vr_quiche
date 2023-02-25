@@ -19,13 +19,7 @@ LDFLAGS = -L$(LIBCRYPTO_DIR) -L$(LIBSSL_DIR) -L$(LIB_DIR)
 
 LIBS = $(LIB_DIR)/libquiche.a -lev -ldl -pthread -lm
 
-all: gserver2 gclient2
-
-gclient2: gclient2.c gstsink.c gstsink.h $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
-	$(CC) $(CFLAGS) $(LDFLAGS) gclient2.c gstsink.c -o $@ $(INCS) $(LIBS) `pkg-config --cflags --libs glib-2.0 gobject-2.0 gtk+-2.0 gstreamer-1.0 gstreamer-app-1.0`
-
-gserver2: gserver2.c gstsrc.c gstsrc.h $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
-	$(CC) $(CFLAGS) $(LDFLAGS) gserver2.c gstsrc.c -o $@ $(INCS) $(LIBS) `pkg-config --cflags --libs glib-2.0 gobject-2.0 gtk+-2.0 gstreamer-1.0 gstreamer-app-1.0`
+all: client server http3-client http3-server
 
 client: client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
@@ -33,8 +27,14 @@ client: client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 server: server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
+http3-client: http3-client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
+
+http3-server: http3-server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
+
 $(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs')
 	cd .. && cargo build --target-dir $(BUILD_DIR) --features ffi
 
 clean:
-	@$(RM) -rf gserver2 gclient2 build/ *.dSYM/
+	@$(RM) -rf client server http3-client http3-server build/ *.dSYM/

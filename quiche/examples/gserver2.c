@@ -39,10 +39,15 @@
 #define APP_H264_DATA 1
 #define APP_SYNTHETIC_DATA_PERIOD 2
 #define APP_SYNTHETIC_DATA_STATIC_SCHEDULE 3
+#define APP_SCHE_PERFORMANCE 4
 #define APP_SYNTHETIC_DATA_PERIOD_IF_NEW_STREAM 1
+
+
+
 #define SYNTHETIC_DATA_LEN 1000000
 
-
+/* TODO: since we turns from only flow-control to both flow-control+CC control, there are changes needed in all applications
+ */
 
 /* struct definition*/
 struct connections {
@@ -75,6 +80,14 @@ static int gl_num_streams = -1;
 static int gl_num_urgency = -1;
 static int gl_app_syn_period_new_stream = -1;
 static int gl_urgency_step = -1;
+
+
+static long gl_stream_start_ts;
+static long gl_stream_out_ts[100];
+static int gl_stream_out_cnt = 0;
+static bool gl_record_flag = false; //record the ts in one flushegress
+static bool gl_reach_cc_flag = false;
+
 
 
 static quiche_config *gl_config = NULL; //quic config
