@@ -232,6 +232,16 @@ void quiche_config_set_active_connection_id_limit(quiche_config *config, uint64_
 // Sets the initial stateless reset token. |v| must contain 16 bytes, otherwise the behaviour is undefined.
 void quiche_config_set_stateless_reset_token(quiche_config *config, const uint8_t *v);
 
+enum quiche_scheduler_type {
+    SCHE_BASIC = 0,
+    SCHE_DTP = 1,
+    SCHE_DYN = 3
+};
+// Sets schduler type
+void quiche_config_set_scheduler_type(quiche_config *config);
+void quiche_config_set_scheduler_name(quiche_config *config, const char* name);
+
+
 // Frees the config object.
 void quiche_config_free(quiche_config *config);
 
@@ -340,6 +350,11 @@ ssize_t quiche_conn_stream_recv(quiche_conn *conn, uint64_t stream_id,
 // Writes data to a stream.
 ssize_t quiche_conn_stream_send(quiche_conn *conn, uint64_t stream_id,
                                 const uint8_t *buf, size_t buf_len, bool fin);
+
+//Writes data to a stream with priority and ddl
+ssize_t quiche_conn_stream_send_full(quiche_conn *conn, uint64_t stream_id,
+                                     const uint8_t *buf, size_t buf_len, bool fin,
+                                     uint64_t deadline, uint64_t priority, uint64_t depend_id);
 
 // The side of the stream to be shut down.
 enum quiche_shutdown {
