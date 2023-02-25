@@ -157,19 +157,19 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
         }
 
 
-        if (cur_stream_id == 9 && flag && record_flag) {
+        if (cur_stream_id >= 9 && cur_stream_id < 9 + 4 * gl_num_streams && flag && record_flag) {
             tot_sent1 += sent;
             fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior1, sent, tot_sent1, cur_stream_id);
             gl_out_ts_prior1[gl_out_cnt_prior1] = temp_time;
             gl_out_cnt_prior1 += 1;
         }
-        else if (cur_stream_id == 13 && flag && record_flag) {
+        else if (cur_stream_id >= 9 + 4 * gl_num_streams && cur_stream_id < 9 + 4 * gl_num_streams*2 && flag && record_flag) {
             tot_sent2 += sent;
             fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior2, sent, tot_sent2, cur_stream_id);
             gl_out_ts_prior2[gl_out_cnt_prior2] = temp_time;
             gl_out_cnt_prior2 += 1;
         }
-        else if (cur_stream_id == 17 && flag && record_flag) {
+        else if (cur_stream_id >= 9 + 4 * gl_num_streams*2 && cur_stream_id < 9 + 4 * gl_num_streams*3 && flag && record_flag) {
             tot_sent3 += sent;
             fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior3, sent, tot_sent3, cur_stream_id);
             gl_out_ts_prior3[gl_out_cnt_prior3] = temp_time;
