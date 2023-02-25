@@ -4436,7 +4436,7 @@ impl Connection {
         });
 
         if sent == 0 && !buf.is_empty() {
-            println!("error3");
+            //println!("error3");
             return Err(Error::Done);
         }
 

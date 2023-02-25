@@ -1376,7 +1376,7 @@ impl SendBuf {
 
             // We are not buffering the full input, so clear the fin flag.
             fin = false;
-            eprintln!("partial write capacity {}", capacity);
+            //eprintln!("partial write capacity {}", capacity);
         }
         if let Some(fin_off) = self.fin_off {
             // Can't write past final offset.
