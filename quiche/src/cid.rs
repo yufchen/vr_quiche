@@ -58,22 +58,20 @@ struct BoundedNonEmptyConnectionIdVecDeque {
 }
 
 impl BoundedNonEmptyConnectionIdVecDeque {
-    /// Creates a `VecDeque` with the provided `capacity` and inserts
+    /// Creates a `VecDeque` bounded by `capacity` and inserts
     /// `initial_entry` in it.
     fn new(capacity: usize, initial_entry: ConnectionIdEntry) -> Self {
-        let capacity = std::cmp::max(capacity, 1);
-        let mut inner = VecDeque::with_capacity(capacity);
+        let mut inner = VecDeque::with_capacity(1);
         inner.push_back(initial_entry);
         Self { inner, capacity }
     }
 
-    /// Updates the capacity of the inner `VecDeque` to `new_capacity`. Does
-    /// nothing if `new_capacity` is lower or equal to the current `capacity`.
+    /// Updates the maximum capacity of the inner `VecDeque` to `new_capacity`.
+    /// Does nothing if `new_capacity` is lower or equal to the current
+    /// `capacity`.
     fn resize(&mut self, new_capacity: usize) {
         if new_capacity > self.capacity {
             self.capacity = new_capacity;
-            let additional = new_capacity - self.inner.len();
-            self.inner.reserve_exact(additional);
         }
     }
 
@@ -313,12 +311,15 @@ impl ConnectionIdentifiers {
 
     /// Sets the maximum number of source connection IDs our peer allows us.
     pub fn set_source_conn_id_limit(&mut self, v: u64) {
+        // Bound conn id limit so our scids queue sizing is valid.
+        let v = std::cmp::min(v, (usize::MAX / 2) as u64) as usize;
+
         // It must be at least 2.
         if v >= 2 {
-            self.source_conn_id_limit = v as usize;
+            self.source_conn_id_limit = v;
             // We need to track up to (2 * source_conn_id_limit - 1) source
             // Connection IDs when the host wants to force their renewal.
-            self.scids.resize((2 * v - 1) as usize);
+            self.scids.resize(2 * v - 1);
         }
     }
 
@@ -343,7 +344,7 @@ impl ConnectionIdentifiers {
     /// the maximum number of active Connection IDs it negotiated. In such case
     /// (i.e., when [`active_source_cids()`] - `peer_active_conn_id_limit` = 0,
     /// if the caller agrees to request the removal of previous connection IDs,
-    /// it sets the `retire_if_needed` parameter. Otherwhise, an [`IdLimit`] is
+    /// it sets the `retire_if_needed` parameter. Otherwise, an [`IdLimit`] is
     /// returned.
     ///
     /// Note that setting `retire_if_needed` does not prevent this function from
@@ -662,7 +663,7 @@ impl ConnectionIdentifiers {
         self.scids.iter().filter(|e| e.path_id.is_none()).count()
     }
 
-    /// Returns the number of Destination Connectino IDs that have not been
+    /// Returns the number of Destination Connection IDs that have not been
     /// assigned to a path yet.
     ///
     /// Note that this function returns 0 if the host uses zero length

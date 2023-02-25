@@ -65,7 +65,7 @@ pub fn connect(
 
     // Resolve server address.
     let peer_addr = if let Some(addr) = &args.connect_to {
-        addr.parse().unwrap()
+        addr.parse().expect("--connect-to is expected to be a string containing an IPv4 or IPv6 address with a port. E.g. 192.0.2.0:443")
     } else {
         connect_url.to_socket_addrs().unwrap().next().unwrap()
     };
@@ -188,7 +188,7 @@ pub fn connect(
     #[cfg(feature = "qlog")]
     {
         if let Some(dir) = std::env::var_os("QLOGDIR") {
-            let id = format!("{:?}", scid);
+            let id = format!("{scid:?}");
             let writer = make_qlog_writer(&dir, "client", &id);
 
             conn.set_qlog(
@@ -224,7 +224,7 @@ pub fn connect(
             continue;
         }
 
-        return Err(ClientError::Other(format!("send() failed: {:?}", e)));
+        return Err(ClientError::Other(format!("send() failed: {e:?}")));
     }
 
     trace!("written {}", write);
@@ -276,8 +276,7 @@ pub fn connect(
                         }
 
                         return Err(ClientError::Other(format!(
-                            "{}: recv() failed: {:?}",
-                            local_addr, e
+                            "{local_addr}: recv() failed: {e:?}"
                         )));
                     },
                 };
@@ -285,9 +284,9 @@ pub fn connect(
                 trace!("{}: got {} bytes", local_addr, len);
 
                 if let Some(target_path) = conn_args.dump_packet_path.as_ref() {
-                    let path = format!("{}/{}.pkt", target_path, pkt_count);
+                    let path = format!("{target_path}/{pkt_count}.pkt");
 
-                    if let Ok(f) = std::fs::File::create(&path) {
+                    if let Ok(f) = std::fs::File::create(path) {
                         let mut f = std::io::BufWriter::new(f);
                         f.write_all(&buf[..len]).ok();
                     }
@@ -317,7 +316,11 @@ pub fn connect(
         trace!("done reading");
 
         if conn.is_closed() {
-            info!("connection closed, {:?}", conn.stats());
+            info!(
+                "connection closed, {:?} {:?}",
+                conn.stats(),
+                conn.path_stats().collect::<Vec<quiche::PathStats>>()
+            );
 
             if !conn.is_established() {
                 error!(
@@ -330,7 +333,7 @@ pub fn connect(
 
             if let Some(session_file) = &args.session_file {
                 if let Some(session) = conn.session() {
-                    std::fs::write(session_file, &session).ok();
+                    std::fs::write(session_file, session).ok();
                 }
             }
 
@@ -389,6 +392,10 @@ pub fn connect(
                     &args.req_headers,
                     &args.body,
                     &args.method,
+                    args.send_priority_update,
+                    conn_args.max_field_section_size,
+                    conn_args.qpack_max_table_capacity,
+                    conn_args.qpack_blocked_streams,
                     args.dump_json,
                     dgram_sender,
                     Rc::clone(&output_sink),
@@ -453,7 +460,7 @@ pub fn connect(
                     new,
                 ) => {
                     info!(
-                        "Peer reused cid seq {} (intially {:?}) on {:?}",
+                        "Peer reused cid seq {} (initially {:?}) on {:?}",
                         cid_seq, old, new
                     );
                 },
@@ -556,7 +563,11 @@ pub fn connect(
         }
 
         if conn.is_closed() {
-            info!("connection closed, {:?}", conn.stats());
+            info!(
+                "connection closed, {:?} {:?}",
+                conn.stats(),
+                conn.path_stats().collect::<Vec<quiche::PathStats>>()
+            );
 
             if !conn.is_established() {
                 error!(
@@ -569,7 +580,7 @@ pub fn connect(
 
             if let Some(session_file) = &args.session_file {
                 if let Some(session) = conn.session() {
-                    std::fs::write(session_file, &session).ok();
+                    std::fs::write(session_file, session).ok();
                 }
             }
 

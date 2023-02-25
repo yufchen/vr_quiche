@@ -40,7 +40,7 @@ use crate::events::EventType;
 /// [`Write`]: https://doc.rust-lang.org/std/io/trait.Write.html
 use super::*;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum StreamerState {
     Initial,
     Ready,
@@ -223,6 +223,10 @@ impl QlogStreamer {
     pub fn writer(&self) -> &Box<dyn std::io::Write + Send + Sync> {
         &self.writer
     }
+
+    pub fn start_time(&self) -> std::time::Instant {
+        self.start_time
+    }
 }
 
 #[cfg(test)]
@@ -231,6 +235,7 @@ mod tests {
     use crate::events::quic;
     use crate::events::quic::QuicFrame;
     use crate::events::RawInfo;
+    use smallvec::smallvec;
     use testing::*;
 
     #[test]
@@ -257,13 +262,14 @@ mod tests {
 
         let event_data1 = EventData::PacketSent(quic::PacketSent {
             header: pkt_hdr.clone(),
-            frames: Some(vec![frame1]),
+            frames: Some(smallvec![frame1]),
             is_coalesced: None,
             retry_token: None,
             stateless_reset_token: None,
             supported_versions: None,
             raw: raw.clone(),
             datagram_id: None,
+            send_at_time: None,
             trigger: None,
         });
 
@@ -287,13 +293,14 @@ mod tests {
 
         let event_data2 = EventData::PacketSent(quic::PacketSent {
             header: pkt_hdr.clone(),
-            frames: Some(vec![frame2]),
+            frames: Some(smallvec![frame2]),
             is_coalesced: None,
             retry_token: None,
             stateless_reset_token: None,
             supported_versions: None,
             raw: raw.clone(),
             datagram_id: None,
+            send_at_time: None,
             trigger: None,
         });
 
@@ -301,13 +308,14 @@ mod tests {
 
         let event_data3 = EventData::PacketSent(quic::PacketSent {
             header: pkt_hdr,
-            frames: Some(vec![frame3]),
+            frames: Some(smallvec![frame3]),
             is_coalesced: None,
             retry_token: None,
             stateless_reset_token: Some("reset_token".to_string()),
             supported_versions: None,
-            raw: raw.clone(),
+            raw,
             datagram_id: None,
+            send_at_time: None,
             trigger: None,
         });
 
@@ -341,7 +349,7 @@ mod tests {
         // here, not timing specifics.
         let now = std::time::Instant::now();
 
-        assert!(matches!(s.add_event_with_instant(ev3.clone(), now), Ok(())));
+        assert!(matches!(s.add_event_with_instant(ev3, now), Ok(())));
 
         assert!(matches!(s.finish_log(), Ok(())));
 

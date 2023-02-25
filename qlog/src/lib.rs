@@ -134,13 +134,14 @@
 //! let event_data =
 //!     qlog::events::EventData::PacketSent(qlog::events::quic::PacketSent {
 //!         header: pkt_hdr,
-//!         frames: Some(frames),
+//!         frames: Some(frames.into()),
 //!         is_coalesced: None,
 //!         retry_token: None,
 //!         stateless_reset_token: None,
 //!         supported_versions: None,
 //!         raw: Some(raw),
 //!         datagram_id: None,
+//!         send_at_time: None,
 //!         trigger: None,
 //!     });
 //!
@@ -337,13 +338,14 @@
 //! let event_data =
 //!     qlog::events::EventData::PacketSent(qlog::events::quic::PacketSent {
 //!         header: pkt_hdr,
-//!         frames: Some(vec![ping, padding]),
+//!         frames: Some(vec![ping, padding].into()),
 //!         is_coalesced: None,
 //!         retry_token: None,
 //!         stateless_reset_token: None,
 //!         supported_versions: None,
 //!         raw: None,
 //!         datagram_id: None,
+//!         send_at_time: None,
 //!         trigger: None,
 //!     });
 //!
@@ -352,7 +354,7 @@
 //! streamer.add_event(event).ok();
 //! ```
 //!
-//! Once all events have have been written, the log
+//! Once all events have been written, the log
 //! can be finalized with [`finish_log()`]:
 //!
 //! ```
@@ -430,7 +432,7 @@ pub enum Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -449,6 +451,7 @@ impl std::convert::From<std::io::Error> for Error {
 pub const QLOG_VERSION: &str = "0.3";
 
 pub type Bytes = String;
+pub type StatelessResetToken = Bytes;
 
 /// A specialized [`Result`] type for quiche qlog operations.
 ///
@@ -559,7 +562,7 @@ impl TraceSeq {
 }
 
 #[serde_with::skip_serializing_none]
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct VantagePoint {
     pub name: Option<String>,
 
@@ -569,7 +572,7 @@ pub struct VantagePoint {
     pub flow: Option<VantagePointType>,
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum VantagePointType {
     Client,
@@ -602,21 +605,20 @@ pub struct CommonFields {
     pub group_id: Option<String>,
     pub protocol_type: Option<Vec<String>>,
 
-    pub reference_time: Option<f32>,
+    pub reference_time: Option<f64>,
     pub time_format: Option<String>,
     // TODO: additionalUserSpecifiedProperty
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenType {
     Retry,
     Resumption,
-    StatelessReset,
 }
 
 #[serde_with::skip_serializing_none]
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct Token {
     #[serde(rename(serialize = "type"))]
     pub ty: Option<TokenType>,
@@ -648,7 +650,7 @@ impl<'a> HexSlice<'a> {
 impl<'a> std::fmt::Display for HexSlice<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for byte in self.0 {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         Ok(())
     }
@@ -747,7 +749,7 @@ mod tests {
 
         let pkt_hdr = make_pkt_hdr(PacketType::Initial);
         let ev_data = EventData::PacketSent(PacketSent {
-            header: pkt_hdr.clone(),
+            header: pkt_hdr,
             frames: None,
             is_coalesced: None,
             retry_token: None,
@@ -759,6 +761,7 @@ mod tests {
                 data: None,
             }),
             datagram_id: None,
+            send_at_time: None,
             trigger: None,
         });
 
@@ -818,8 +821,8 @@ mod tests {
         });
 
         let ev_data = EventData::PacketSent(PacketSent {
-            header: pkt_hdr.clone(),
-            frames: Some(frames),
+            header: pkt_hdr,
+            frames: Some(frames.into()),
             is_coalesced: None,
             retry_token: None,
             stateless_reset_token: None,
@@ -830,6 +833,7 @@ mod tests {
                 data: None,
             }),
             datagram_id: None,
+            send_at_time: None,
             trigger: None,
         });
 
@@ -938,7 +942,7 @@ mod tests {
         }];
         let event_data = EventData::PacketSent(PacketSent {
             header: pkt_hdr,
-            frames: Some(frames),
+            frames: Some(frames.into()),
             is_coalesced: None,
             retry_token: None,
             stateless_reset_token: None,
@@ -949,6 +953,7 @@ mod tests {
                 data: None,
             }),
             datagram_id: None,
+            send_at_time: None,
             trigger: None,
         });
 

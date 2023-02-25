@@ -125,7 +125,7 @@ int quiche_enable_debug_logging(void (*cb)(const char *line, void *argp),
                                 void *argp);
 
 // Stores configuration shared between multiple connections.
-typedef struct Config quiche_config;
+typedef struct quiche_config quiche_config;
 
 // Creates a config object with the given version.
 quiche_config *quiche_config_new(uint32_t version);
@@ -212,6 +212,9 @@ void quiche_config_set_cc_algorithm(quiche_config *config, enum quiche_cc_algori
 // Configures whether to use HyStart++.
 void quiche_config_enable_hystart(quiche_config *config, bool v);
 
+// Configures whether to enable pacing (enabled by default).
+void quiche_config_enable_pacing(quiche_config *config, bool v);
+
 // Configures whether to enable receiving DATAGRAM frames.
 void quiche_config_enable_dgram(quiche_config *config, bool enabled,
                                 size_t recv_queue_len,
@@ -226,20 +229,8 @@ void quiche_config_set_max_stream_window(quiche_config *config, uint64_t v);
 // Sets the limit of active connection IDs.
 void quiche_config_set_active_connection_id_limit(quiche_config *config, uint64_t v);
 
-// Sets the initial stateless reset token.
+// Sets the initial stateless reset token. |v| must contain 16 bytes, otherwise the behaviour is undefined.
 void quiche_config_set_stateless_reset_token(quiche_config *config, const uint8_t *v);
-
-enum quiche_scheduler_type {
-    SCHE_BASIC = 0,
-    SCHE_DTP = 1,
-    SCHE_DYN = 3
-};
-
-// Sets schduler type
-void quiche_config_set_scheduler_type(quiche_config *config);
-
-void quiche_config_set_scheduler_name(quiche_config *config, const char* name);
-
 
 // Frees the config object.
 void quiche_config_free(quiche_config *config);
@@ -253,7 +244,7 @@ int quiche_header_info(const uint8_t *buf, size_t buf_len, size_t dcil,
                        uint8_t *token, size_t *token_len);
 
 // A QUIC connection.
-typedef struct Connection quiche_conn;
+typedef struct quiche_conn quiche_conn;
 
 // Creates a new server-side connection.
 quiche_conn *quiche_accept(const uint8_t *scid, size_t scid_len,
@@ -340,7 +331,7 @@ ssize_t quiche_conn_send(quiche_conn *conn, uint8_t *out, size_t out_len,
                          quiche_send_info *out_info);
 
 // Returns the size of the send quantum, in bytes.
-size_t quiche_conn_send_quantum(quiche_conn *conn);
+size_t quiche_conn_send_quantum(const quiche_conn *conn);
 
 // Reads contiguous data from a stream.
 ssize_t quiche_conn_stream_recv(quiche_conn *conn, uint64_t stream_id,
@@ -350,10 +341,7 @@ ssize_t quiche_conn_stream_recv(quiche_conn *conn, uint64_t stream_id,
 ssize_t quiche_conn_stream_send(quiche_conn *conn, uint64_t stream_id,
                                 const uint8_t *buf, size_t buf_len, bool fin);
 
-//Writes data to a stream with priority and ddl
-ssize_t quiche_conn_stream_send_full(quiche_conn *conn, uint64_t stream_id,
-                                const uint8_t *buf, size_t buf_len, bool fin,
-                                uint64_t deadline, uint64_t priority, uint64_t depend_id);
+// The side of the stream to be shut down.
 enum quiche_shutdown {
     QUICHE_SHUTDOWN_READ = 0,
     QUICHE_SHUTDOWN_WRITE = 1,
@@ -367,29 +355,36 @@ int quiche_conn_stream_priority(quiche_conn *conn, uint64_t stream_id,
 int quiche_conn_stream_shutdown(quiche_conn *conn, uint64_t stream_id,
                                 enum quiche_shutdown direction, uint64_t err);
 
-ssize_t quiche_conn_stream_capacity(quiche_conn *conn, uint64_t stream_id);
+// Returns the stream's send capacity in bytes.
+ssize_t quiche_conn_stream_capacity(const quiche_conn *conn, uint64_t stream_id);
 
-bool quiche_conn_stream_readable(quiche_conn *conn, uint64_t stream_id);
+// Returns true if the stream has data that can be read.
+bool quiche_conn_stream_readable(const quiche_conn *conn, uint64_t stream_id);
+
+// Returns true if the stream has enough send capacity.
+//
+// On error a value lower than 0 is returned.
+int quiche_conn_stream_writable(quiche_conn *conn, uint64_t stream_id, size_t len);
 
 // Returns true if all the data has been read from the specified stream.
-bool quiche_conn_stream_finished(quiche_conn *conn, uint64_t stream_id);
+bool quiche_conn_stream_finished(const quiche_conn *conn, uint64_t stream_id);
 
-typedef struct StreamIter quiche_stream_iter;
+typedef struct quiche_stream_iter quiche_stream_iter;
 
 // Returns an iterator over streams that have outstanding data to read.
-quiche_stream_iter *quiche_conn_readable(quiche_conn *conn);
+quiche_stream_iter *quiche_conn_readable(const quiche_conn *conn);
 
 // Returns an iterator over streams that can be written to.
-quiche_stream_iter *quiche_conn_writable(quiche_conn *conn);
+quiche_stream_iter *quiche_conn_writable(const quiche_conn *conn);
 
 // Returns the maximum possible size of egress UDP payloads.
-size_t quiche_conn_max_send_udp_payload_size(quiche_conn *conn);
+size_t quiche_conn_max_send_udp_payload_size(const quiche_conn *conn);
 
 // Returns the amount of time until the next timeout event, in nanoseconds.
-uint64_t quiche_conn_timeout_as_nanos(quiche_conn *conn);
+uint64_t quiche_conn_timeout_as_nanos(const quiche_conn *conn);
 
 // Returns the amount of time until the next timeout event, in milliseconds.
-uint64_t quiche_conn_timeout_as_millis(quiche_conn *conn);
+uint64_t quiche_conn_timeout_as_millis(const quiche_conn *conn);
 
 // Processes a timeout event.
 void quiche_conn_on_timeout(quiche_conn *conn);
@@ -399,54 +394,54 @@ int quiche_conn_close(quiche_conn *conn, bool app, uint64_t err,
                       const uint8_t *reason, size_t reason_len);
 
 // Returns a string uniquely representing the connection.
-void quiche_conn_trace_id(quiche_conn *conn, const uint8_t **out, size_t *out_len);
+void quiche_conn_trace_id(const quiche_conn *conn, const uint8_t **out, size_t *out_len);
 
 // Returns the source connection ID.
-void quiche_conn_source_id(quiche_conn *conn, const uint8_t **out, size_t *out_len);
+void quiche_conn_source_id(const quiche_conn *conn, const uint8_t **out, size_t *out_len);
 
 // Returns the destination connection ID.
-void quiche_conn_destination_id(quiche_conn *conn, const uint8_t **out, size_t *out_len);
+void quiche_conn_destination_id(const quiche_conn *conn, const uint8_t **out, size_t *out_len);
 
 // Returns the negotiated ALPN protocol.
-void quiche_conn_application_proto(quiche_conn *conn, const uint8_t **out,
+void quiche_conn_application_proto(const quiche_conn *conn, const uint8_t **out,
                                    size_t *out_len);
 
 // Returns the peer's leaf certificate (if any) as a DER-encoded buffer.
-void quiche_conn_peer_cert(quiche_conn *conn, const uint8_t **out, size_t *out_len);
+void quiche_conn_peer_cert(const quiche_conn *conn, const uint8_t **out, size_t *out_len);
 
 // Returns the serialized cryptographic session for the connection.
-void quiche_conn_session(quiche_conn *conn, const uint8_t **out, size_t *out_len);
+void quiche_conn_session(const quiche_conn *conn, const uint8_t **out, size_t *out_len);
 
 // Returns true if the connection handshake is complete.
-bool quiche_conn_is_established(quiche_conn *conn);
+bool quiche_conn_is_established(const quiche_conn *conn);
 
 // Returns true if the connection has a pending handshake that has progressed
 // enough to send or receive early data.
-bool quiche_conn_is_in_early_data(quiche_conn *conn);
+bool quiche_conn_is_in_early_data(const quiche_conn *conn);
 
 // Returns whether there is stream or DATAGRAM data available to read.
-bool quiche_conn_is_readable(quiche_conn *conn);
+bool quiche_conn_is_readable(const quiche_conn *conn);
 
 // Returns true if the connection is draining.
-bool quiche_conn_is_draining(quiche_conn *conn);
+bool quiche_conn_is_draining(const quiche_conn *conn);
 
 // Returns the number of bidirectional streams that can be created
 // before the peer's stream count limit is reached.
-uint64_t quiche_conn_peer_streams_left_bidi(quiche_conn *conn);
+uint64_t quiche_conn_peer_streams_left_bidi(const quiche_conn *conn);
 
 // Returns the number of unidirectional streams that can be created
 // before the peer's stream count limit is reached.
-uint64_t quiche_conn_peer_streams_left_uni(quiche_conn *conn);
+uint64_t quiche_conn_peer_streams_left_uni(const quiche_conn *conn);
 
 // Returns true if the connection is closed.
-bool quiche_conn_is_closed(quiche_conn *conn);
+bool quiche_conn_is_closed(const quiche_conn *conn);
 
 // Returns true if the connection was closed due to the idle timeout.
-bool quiche_conn_is_timed_out(quiche_conn *conn);
+bool quiche_conn_is_timed_out(const quiche_conn *conn);
 
 // Returns true if a connection error was received, and updates the provided
 // parameters accordingly.
-bool quiche_conn_peer_error(quiche_conn *conn,
+bool quiche_conn_peer_error(const quiche_conn *conn,
                             bool *is_app,
                             uint64_t *error_code,
                             const uint8_t **reason,
@@ -454,11 +449,11 @@ bool quiche_conn_peer_error(quiche_conn *conn,
 
 // Returns true if a connection error was queued or sent, and updates the provided
 // parameters accordingly.
-bool quiche_conn_local_error(quiche_conn *conn,
-                            bool *is_app,
-                            uint64_t *error_code,
-                            const uint8_t **reason,
-                            size_t *reason_len);
+bool quiche_conn_local_error(const quiche_conn *conn,
+                             bool *is_app,
+                             uint64_t *error_code,
+                             const uint8_t **reason,
+                             size_t *reason_len);
 
 // Initializes the stream's application data.
 //
@@ -481,58 +476,6 @@ bool quiche_stream_iter_next(quiche_stream_iter *iter, uint64_t *stream_id);
 void quiche_stream_iter_free(quiche_stream_iter *iter);
 
 typedef struct {
-    // The local address used by this path.
-    struct sockaddr_storage local_addr;
-    socklen_t local_addr_len;
-
-    // The peer address seen by this path.
-    struct sockaddr_storage peer_addr;
-    socklen_t peer_addr_len;
-
-    // The validation state of the path.
-    ssize_t validation_state;
-
-    // Whether this path is active.
-    bool active;
-
-    // The number of QUIC packets received on this path.
-    size_t recv;
-
-    // The number of QUIC packets sent on this path.
-    size_t sent;
-
-    // The number of QUIC packets that were lost on this path.
-    size_t lost;
-
-    // The number of sent QUIC packets with retranmitted data on this path.
-    size_t retrans;
-
-    // The estimated round-trip time of the path (in nanoseconds).
-    uint64_t rtt;
-
-    // The size of the path's congestion window in bytes.
-    size_t cwnd;
-
-    // The number of sent bytes on this path.
-    uint64_t sent_bytes;
-
-    // The number of recevied bytes on this path.
-    uint64_t recv_bytes;
-
-    // The number of bytes lost on this path.
-    uint64_t lost_bytes;
-
-    // The number of stream bytes retransmitted on this path.
-    uint64_t stream_retrans_bytes;
-
-    // The current PMTU for the path.
-    size_t pmtu;
-
-    // The most recent data delivery rate estimate in bytes/s.
-    uint64_t delivery_rate;
-} quiche_path_stats;
-
-typedef struct {
     // The number of QUIC packets received on this connection.
     size_t recv;
 
@@ -542,13 +485,13 @@ typedef struct {
     // The number of QUIC packets that were lost.
     size_t lost;
 
-    // The number of sent QUIC packets with retranmitted data.
+    // The number of sent QUIC packets with retransmitted data.
     size_t retrans;
 
     // The number of sent bytes.
     uint64_t sent_bytes;
 
-    // The number of recevied bytes.
+    // The number of received bytes.
     uint64_t recv_bytes;
 
     // The number of bytes lost.
@@ -556,6 +499,9 @@ typedef struct {
 
     // The number of stream bytes retransmitted.
     uint64_t stream_retrans_bytes;
+
+    // The number of known paths for the connection.
+    size_t paths_count;
 
     // The maximum idle timeout.
     uint64_t peer_max_idle_timeout;
@@ -595,34 +541,87 @@ typedef struct {
 
     // DATAGRAM frame extension parameter, if any.
     ssize_t peer_max_datagram_frame_size;
-
-    // The stats of the connection's paths.
-    quiche_path_stats paths[8];
-
-    // The number of stats of the connection's paths.
-    size_t paths_len;
 } quiche_stats;
 
 // Collects and returns statistics about the connection.
-void quiche_conn_stats(quiche_conn *conn, quiche_stats *out);
+void quiche_conn_stats(const quiche_conn *conn, quiche_stats *out);
+
+typedef struct {
+    // The local address used by this path.
+    struct sockaddr_storage local_addr;
+    socklen_t local_addr_len;
+
+    // The peer address seen by this path.
+    struct sockaddr_storage peer_addr;
+    socklen_t peer_addr_len;
+
+    // The validation state of the path.
+    ssize_t validation_state;
+
+    // Whether this path is active.
+    bool active;
+
+    // The number of QUIC packets received on this path.
+    size_t recv;
+
+    // The number of QUIC packets sent on this path.
+    size_t sent;
+
+    // The number of QUIC packets that were lost on this path.
+    size_t lost;
+
+    // The number of sent QUIC packets with retransmitted data on this path.
+    size_t retrans;
+
+    // The estimated round-trip time of the path (in nanoseconds).
+    uint64_t rtt;
+
+    // The size of the path's congestion window in bytes.
+    size_t cwnd;
+
+    // The number of sent bytes on this path.
+    uint64_t sent_bytes;
+
+    // The number of received bytes on this path.
+    uint64_t recv_bytes;
+
+    // The number of bytes lost on this path.
+    uint64_t lost_bytes;
+
+    // The number of stream bytes retransmitted on this path.
+    uint64_t stream_retrans_bytes;
+
+    // The current PMTU for the path.
+    size_t pmtu;
+
+    // The most recent data delivery rate estimate in bytes/s.
+    uint64_t delivery_rate;
+} quiche_path_stats;
+
+
+// Collects and returns statistics about the specified path for the connection.
+//
+// The `idx` argument represent the path's index (also see the `paths_count`
+// field of `quiche_stats`).
+int quiche_conn_path_stats(const quiche_conn *conn, size_t idx, quiche_path_stats *out);
 
 // Returns the maximum DATAGRAM payload that can be sent.
-ssize_t quiche_conn_dgram_max_writable_len(quiche_conn *conn);
+ssize_t quiche_conn_dgram_max_writable_len(const quiche_conn *conn);
 
 // Returns the length of the first stored DATAGRAM.
-ssize_t quiche_conn_dgram_recv_front_len(quiche_conn *conn);
+ssize_t quiche_conn_dgram_recv_front_len(const quiche_conn *conn);
 
 // Returns the number of items in the DATAGRAM receive queue.
-ssize_t quiche_conn_dgram_recv_queue_len(quiche_conn *conn);
+ssize_t quiche_conn_dgram_recv_queue_len(const quiche_conn *conn);
 
 // Returns the total size of all items in the DATAGRAM receive queue.
-ssize_t quiche_conn_dgram_recv_queue_byte_size(quiche_conn *conn);
+ssize_t quiche_conn_dgram_recv_queue_byte_size(const quiche_conn *conn);
 
 // Returns the number of items in the DATAGRAM send queue.
-ssize_t quiche_conn_dgram_send_queue_len(quiche_conn *conn);
+ssize_t quiche_conn_dgram_send_queue_len(const quiche_conn *conn);
 
 // Returns the total size of all items in the DATAGRAM send queue.
-ssize_t quiche_conn_dgram_send_queue_byte_size(quiche_conn *conn);
+ssize_t quiche_conn_dgram_send_queue_byte_size(const quiche_conn *conn);
 
 // Reads the first received DATAGRAM.
 ssize_t quiche_conn_dgram_recv(quiche_conn *conn, uint8_t *buf,
@@ -635,6 +634,14 @@ ssize_t quiche_conn_dgram_send(quiche_conn *conn, const uint8_t *buf,
 // Purges queued outgoing DATAGRAMs matching the predicate.
 void quiche_conn_dgram_purge_outgoing(quiche_conn *conn,
                                       bool (*f)(uint8_t *, size_t));
+
+// Schedule an ack-eliciting packet on the active path.
+ssize_t quiche_conn_send_ack_eliciting(quiche_conn *conn);
+
+// Schedule an ack-eliciting packet on the specified path.
+ssize_t quiche_conn_send_ack_eliciting_on_path(quiche_conn *conn,
+                           const struct sockaddr *local, size_t local_len,
+                           const struct sockaddr *peer, size_t peer_len);
 
 // Frees the connection object.
 void quiche_conn_free(quiche_conn *conn);
@@ -767,7 +774,7 @@ enum quiche_h3_error {
 };
 
 // Stores configuration shared between multiple connections.
-typedef struct Http3Config quiche_h3_config;
+typedef struct quiche_h3_config quiche_h3_config;
 
 // Creates an HTTP/3 config object with default settings values.
 quiche_h3_config *quiche_h3_config_new(void);
@@ -781,11 +788,14 @@ void quiche_h3_config_set_qpack_max_table_capacity(quiche_h3_config *config, uin
 // Sets the `SETTINGS_QPACK_BLOCKED_STREAMS` setting.
 void quiche_h3_config_set_qpack_blocked_streams(quiche_h3_config *config, uint64_t v);
 
+// Sets the `SETTINGS_ENABLE_CONNECT_PROTOCOL` setting.
+void quiche_h3_config_enable_extended_connect(quiche_h3_config *config, bool enabled);
+
 // Frees the HTTP/3 config object.
 void quiche_h3_config_free(quiche_h3_config *config);
 
-// A QUIC connection.
-typedef struct Http3Connection quiche_h3_conn;
+// An HTTP/3 connection.
+typedef struct quiche_h3_conn quiche_h3_conn;
 
 // Creates a new server-side connection.
 quiche_h3_conn *quiche_h3_accept(quiche_conn *quiche_conn,
@@ -805,7 +815,7 @@ enum quiche_h3_event_type {
     QUICHE_H3_EVENT_PRIORITY_UPDATE,
 };
 
-typedef struct Http3Event quiche_h3_event;
+typedef struct quiche_h3_event quiche_h3_event;
 
 // Processes HTTP/3 data received from the peer.
 int64_t quiche_h3_conn_poll(quiche_h3_conn *conn, quiche_conn *quic_conn,
@@ -838,6 +848,9 @@ int quiche_h3_for_each_setting(quiche_h3_conn *conn,
 
 // Check whether data will follow the headers on the stream.
 bool quiche_h3_event_headers_has_body(quiche_h3_event *ev);
+
+// Check whether or not extended connection is enabled by the peer
+bool quiche_h3_extended_connect_enabled_by_peer(quiche_h3_conn *conn);
 
 // Frees the HTTP/3 event object.
 void quiche_h3_event_free(quiche_h3_event *ev);
@@ -885,6 +898,13 @@ ssize_t quiche_h3_recv_body(quiche_h3_conn *conn, quiche_conn *quic_conn,
 int quiche_h3_parse_extensible_priority(uint8_t *priority,
                                         size_t priority_len,
                                         quiche_h3_priority *parsed);
+
+/// Sends a PRIORITY_UPDATE frame on the control stream with specified
+/// request stream ID and priority.
+int quiche_h3_send_priority_update_for_request(quiche_h3_conn *conn,
+                                               quiche_conn *quic_conn,
+                                               uint64_t stream_id,
+                                               quiche_h3_priority *priority);
 
 // Take the last received PRIORITY_UPDATE frame for a stream.
 //

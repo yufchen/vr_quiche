@@ -438,7 +438,6 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
         }
 
         //fprintf(stderr, "recv %zd bytes\n", done);
-        //static const char resp[40000] = {'\0'};
 
         if (quiche_conn_is_established(conn_io->conn)) {
             uint64_t s = 0;
@@ -480,6 +479,9 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
             //printf("\nStream Cap: %d\n", stream_cap);
 
             if (stream_cap > 130000 && !stop_sending){
+
+                //flush_egress(loop, conn_io);
+
                 quiche_stats stats;
                 quiche_conn_stats(conn_io->conn, &stats);
                 init_retrans = stats.retrans;
@@ -499,29 +501,34 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                 //fprintf(fp, "%ld, dgram start time\n", getcurTime());
                 gl_dgram_start_ts = getcurTime();
                 for(int i = 0; i < 38;i++) {
+                    //printf("Sent Datagram %d bytes\n", (int)quiche_conn_dgram_send(conn_io->conn, (uint8_t *) buf_dgram_rnd, 1000));
                     quiche_conn_dgram_send(conn_io->conn, (uint8_t *) buf_dgram_rnd, 1310);
                 }
                 quiche_conn_dgram_send(conn_io->conn, (uint8_t *) buf_dgram_rnd, 220);
+                //printf("Sent %d bytes.\n", (int)quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) buf_rnd, 50000, false));
+                //fprintf(fp, "%ld, stream start time\n", getcurTime());
 
                 gl_stream_start_ts = getcurTime();
                 quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) buf_rnd, 50000, false);
 
             }
             if (!flag){
+                //printf("Sent %d bytes.\n", (int)quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 10000, false));
                 quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 100000, false);
             }
         }
 
         flush_egress(loop, conn_io);
+
         if (quiche_conn_is_closed(conn_io->conn)) {
             quiche_stats stats;
-            //quiche_path_stats path_stats;
+            quiche_path_stats path_stats;
 
             quiche_conn_stats(conn_io->conn, &stats);
-            //quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
+            quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
 
-            fprintf(stderr, "connection closed, recv=%zu sent=%zu lost=%zu\n",
-                    stats.recv, stats.sent, stats.lost);
+            fprintf(stderr, "connection closed, recv=%zu sent=%zu lost=%zu rtt=%" PRIu64 "ns cwnd=%zu\n",
+                    stats.recv, stats.sent, stats.lost, path_stats.rtt, path_stats.cwnd);
 
             HASH_DELETE(hh, conns->h, conn_io);
 
@@ -542,13 +549,13 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
 
     if (quiche_conn_is_closed(conn_io->conn)) {
         quiche_stats stats;
-        //quiche_path_stats path_stats;
+        quiche_path_stats path_stats;
 
         quiche_conn_stats(conn_io->conn, &stats);
-        //quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
+        quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
 
-        fprintf(stderr, "connection closed, retrans = %zu recv=%zu sent=%zu lost=%zu \n",
-                stats.retrans, stats.recv, stats.sent, stats.lost);
+        fprintf(stderr, "connection closed, retrans = %zu recv=%zu sent=%zu lost=%zu rtt=%" PRIu64 "ns cwnd=%zu\n",
+                stats.retrans, stats.recv, stats.sent, stats.lost, path_stats.rtt, path_stats.cwnd);
 
         HASH_DELETE(hh, conns->h, conn_io);
 
@@ -687,4 +694,5 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+
 

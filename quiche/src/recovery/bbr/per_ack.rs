@@ -79,7 +79,7 @@ fn bbr_update_btlbw(r: &mut Recovery, packet: &Acked) {
     {
         // Since minmax filter is based on time,
         // start_time + (round_count as seconds) is used instead.
-        r.bbr_state.btlbw = r.bbr_state.btlbwfilter._running_max(
+        r.bbr_state.btlbw = r.bbr_state.btlbwfilter.running_max(
             BTLBW_FILTER_LEN,
             r.bbr_state.start_time + Duration::from_secs(r.bbr_state.round_count),
             r.delivery_rate(),

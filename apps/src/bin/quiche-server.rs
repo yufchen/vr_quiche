@@ -27,6 +27,8 @@
 #[macro_use]
 extern crate log;
 
+use std::io;
+
 use std::net;
 
 use std::io::prelude::*;
@@ -43,13 +45,16 @@ use quiche_apps::args::*;
 
 use quiche_apps::common::*;
 
-const MAX_BUF_SIZE: usize = 65535;
+use quiche_apps::sendto::*;
+
+const MAX_BUF_SIZE: usize = 65507;
 
 const MAX_DATAGRAM_SIZE: usize = 1350;
 
 fn main() {
     let mut buf = [0; MAX_BUF_SIZE];
-    let mut out = [0; MAX_DATAGRAM_SIZE];
+    let mut out = [0; MAX_BUF_SIZE];
+    let mut pacing = false;
 
     env_logger::builder()
         .default_format_timestamp_nanos(true)
@@ -67,11 +72,31 @@ fn main() {
     // Create the UDP listening socket, and register it with the event loop.
     let mut socket =
         mio::net::UdpSocket::bind(args.listen.parse().unwrap()).unwrap();
+
+    // Set SO_TXTIME socket option on the listening UDP socket for pacing
+    // outgoing packets.
+    match set_txtime_sockopt(&socket) {
+        Ok(_) => {
+            pacing = true;
+            debug!("successfully set SO_TXTIME socket option");
+        },
+        Err(e) => debug!("setsockopt failed {:?}", e),
+    };
+
     info!("listening on {:}", socket.local_addr().unwrap());
 
     poll.registry()
         .register(&mut socket, mio::Token(0), mio::Interest::READABLE)
         .unwrap();
+
+    let max_datagram_size = MAX_DATAGRAM_SIZE;
+    let enable_gso = if args.disable_gso {
+        false
+    } else {
+        detect_gso(&socket, max_datagram_size)
+    };
+
+    trace!("GSO detected: {}", enable_gso);
 
     // Create the configuration for the QUIC connections.
     let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
@@ -82,8 +107,8 @@ fn main() {
     config.set_application_protos(&conn_args.alpns).unwrap();
 
     config.set_max_idle_timeout(conn_args.idle_timeout);
-    config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
-    config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
+    config.set_max_recv_udp_payload_size(max_datagram_size);
+    config.set_max_send_udp_payload_size(max_datagram_size);
     config.set_initial_max_data(conn_args.max_data);
     config.set_initial_max_stream_data_bidi_local(conn_args.max_stream_data);
     config.set_initial_max_stream_data_bidi_remote(conn_args.max_stream_data);
@@ -190,9 +215,9 @@ fn main() {
             let pkt_buf = &mut buf[..len];
 
             if let Some(target_path) = conn_args.dump_packet_path.as_ref() {
-                let path = format!("{}/{}.pkt", target_path, pkt_count);
+                let path = format!("{target_path}/{pkt_count}.pkt");
 
-                if let Ok(f) = std::fs::File::create(&path) {
+                if let Ok(f) = std::fs::File::create(path) {
                     let mut f = std::io::BufWriter::new(f);
                     f.write_all(pkt_buf).ok();
                 }
@@ -352,7 +377,9 @@ fn main() {
                     partial_responses: HashMap::new(),
                     siduck_conn: None,
                     app_proto_selected: false,
-                    bytes_sent: 0,
+                    max_datagram_size,
+                    loss_rate: 0.0,
+                    max_send_burst: MAX_BUF_SIZE,
                 };
 
                 clients.insert(client_id, client);
@@ -403,8 +430,9 @@ fn main() {
                 // is not much anyone can do to recover.
                 let app_proto = client.conn.application_proto();
 
+                #[allow(clippy::box_default)]
                 if alpns::HTTP_09.contains(&app_proto) {
-                    client.http_conn = Some(Box::new(Http09Conn::default()));
+                    client.http_conn = Some(Box::<Http09Conn>::default());
 
                     client.app_proto_selected = true;
                 } else if alpns::HTTP_3.contains(&app_proto) {
@@ -418,11 +446,21 @@ fn main() {
                         None
                     };
 
-                    client.http_conn = Some(Http3Conn::with_conn(
+                    client.http_conn = match Http3Conn::with_conn(
                         &mut client.conn,
+                        conn_args.max_field_section_size,
+                        conn_args.qpack_max_table_capacity,
+                        conn_args.qpack_blocked_streams,
                         dgram_sender,
                         Rc::new(RefCell::new(stdout_sink)),
-                    ));
+                    ) {
+                        Ok(v) => Some(v),
+
+                        Err(e) => {
+                            trace!("{} {}", client.conn.trace_id(), e);
+                            None
+                        },
+                    };
 
                     client.app_proto_selected = true;
                 } else if alpns::SIDUCK.contains(&app_proto) {
@@ -433,6 +471,10 @@ fn main() {
 
                     client.app_proto_selected = true;
                 }
+
+                // Update max_datagram_size after connection established.
+                client.max_datagram_size =
+                    client.conn.max_send_udp_payload_size();
             }
 
             if client.http_conn.is_some() {
@@ -498,12 +540,29 @@ fn main() {
         // packets to be sent.
         continue_write = false;
         for client in clients.values_mut() {
-            let max_send_burst = client.conn.send_quantum().min(MAX_BUF_SIZE) /
-                MAX_DATAGRAM_SIZE *
-                MAX_DATAGRAM_SIZE;
+            // Reduce max_send_burst by 25% if loss is increasing more than 0.1%.
+            let loss_rate =
+                client.conn.stats().lost as f64 / client.conn.stats().sent as f64;
+            if loss_rate > client.loss_rate + 0.001 {
+                client.max_send_burst = client.max_send_burst / 4 * 3;
+                // Minimun bound of 10xMSS.
+                client.max_send_burst =
+                    client.max_send_burst.max(client.max_datagram_size * 10);
+                client.loss_rate = loss_rate;
+            }
 
-            loop {
-                let (write, send_info) = match client.conn.send(&mut out) {
+            let max_send_burst =
+                client.conn.send_quantum().min(client.max_send_burst) /
+                    client.max_datagram_size *
+                    client.max_datagram_size;
+            let mut total_write = 0;
+            let mut dst_info = None;
+
+            while total_write < max_send_burst {
+                let (write, send_info) = match client
+                    .conn
+                    .send(&mut out[total_write..max_send_burst])
+                {
                     Ok(v) => v,
 
                     Err(quiche::Error::Done) => {
@@ -519,31 +578,42 @@ fn main() {
                     },
                 };
 
-                // TODO: coalesce packets.
-                if let Err(e) = socket.send_to(&out[..write], send_info.to) {
-                    if e.kind() == std::io::ErrorKind::WouldBlock {
-                        trace!("send() would block");
-                        break;
-                    }
+                total_write += write;
 
-                    panic!("send() failed: {:?}", e);
-                }
+                // Use the first packet time to send, not the last.
+                let _ = dst_info.get_or_insert(send_info);
 
-                trace!("{} written {} bytes", client.conn.trace_id(), write);
-
-                // limit write bursting
-                client.bytes_sent += write;
-
-                if client.bytes_sent >= max_send_burst {
-                    trace!(
-                        "{} pause writing at {}",
-                        client.conn.trace_id(),
-                        client.bytes_sent
-                    );
-                    client.bytes_sent = 0;
-                    continue_write = true;
+                if write < client.max_datagram_size {
                     break;
                 }
+            }
+
+            if total_write == 0 || dst_info.is_none() {
+                break;
+            }
+
+            if let Err(e) = send_to(
+                &socket,
+                &out[..total_write],
+                &dst_info.unwrap(),
+                client.max_datagram_size,
+                pacing,
+                enable_gso,
+            ) {
+                if e.kind() == std::io::ErrorKind::WouldBlock {
+                    trace!("send() would block");
+                    break;
+                }
+
+                panic!("send_to() failed: {:?}", e);
+            }
+
+            trace!("{} written {} bytes", client.conn.trace_id(), total_write);
+
+            if total_write >= max_send_burst {
+                trace!("{} pause writing", client.conn.trace_id(),);
+                continue_write = true;
+                break;
             }
         }
 
@@ -553,9 +623,10 @@ fn main() {
 
             if c.conn.is_closed() {
                 info!(
-                    "{} connection collected {:?}",
+                    "{} connection collected {:?} {:?}",
                     c.conn.trace_id(),
-                    c.conn.stats()
+                    c.conn.stats(),
+                    c.conn.path_stats().collect::<Vec<quiche::PathStats>>()
                 );
             }
 
@@ -669,7 +740,7 @@ fn handle_path_events(client: &mut Client) {
 
             quiche::PathEvent::ReusedSourceConnectionId(cid_seq, old, new) => {
                 info!(
-                    "{} Peer reused cid seq {} (intially {:?}) on {:?}",
+                    "{} Peer reused cid seq {} (initially {:?}) on {:?}",
                     client.conn.trace_id(),
                     cid_seq,
                     old,
@@ -687,4 +758,37 @@ fn handle_path_events(client: &mut Client) {
             },
         }
     }
+}
+
+/// Set SO_TXTIME socket option.
+///
+/// This socket option is set to send to kernel the outgoing UDP
+/// packet transmission time in the sendmsg syscall.
+///
+/// Note that this socket option is set only on linux platforms.
+#[cfg(target_os = "linux")]
+fn set_txtime_sockopt(sock: &mio::net::UdpSocket) -> io::Result<()> {
+    use nix::sys::socket::setsockopt;
+    use nix::sys::socket::sockopt::TxTime;
+    use std::os::unix::io::AsRawFd;
+
+    let config = nix::libc::sock_txtime {
+        clockid: libc::CLOCK_MONOTONIC,
+        flags: 0,
+    };
+
+    setsockopt(sock.as_raw_fd(), TxTime, &config)?;
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_txtime_sockopt(_: &mio::net::UdpSocket) -> io::Result<()> {
+    use std::io::Error;
+    use std::io::ErrorKind;
+
+    Err(Error::new(
+        ErrorKind::Other,
+        "Not supported on this platform",
+    ))
 }

@@ -37,7 +37,7 @@ pub type Result<T> = std::result::Result<T, BufferTooShortError>;
 /// An error indicating that the provided [`OctetsMut`] is not big enough.
 ///
 /// [`OctetsMut`]: struct.OctetsMut.html
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BufferTooShortError;
 
 impl std::fmt::Display for BufferTooShortError {
@@ -118,7 +118,7 @@ macro_rules! put_u {
 /// Additionally, an offset (initially set to the start of the buffer) is
 /// incremented as bytes are read from / written to the buffer, to allow for
 /// sequential operations.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Octets<'a> {
     buf: &'a [u8],
     off: usize,
@@ -127,8 +127,8 @@ pub struct Octets<'a> {
 impl<'a> Octets<'a> {
     /// Creates an `Octets` from the given slice, without copying.
     ///
-    /// Since there's no copy, the input slice needs to be mutable to allow
-    /// modifications.
+    /// Since the `Octets` is immutable, the input slice needs to be
+    /// immutable.
     pub fn with_slice(buf: &'a [u8]) -> Self {
         Octets { buf, off: 0 }
     }
@@ -320,7 +320,7 @@ impl<'a> AsRef<[u8]> for Octets<'a> {
 /// A zero-copy mutable byte buffer.
 ///
 /// Like `Octets` but mutable.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct OctetsMut<'a> {
     buf: &'a mut [u8],
     off: usize,
@@ -666,7 +666,7 @@ impl<'a> AsMut<[u8]> for OctetsMut<'a> {
 
 /// Returns how many bytes it would take to encode `v` as a variable-length
 /// integer.
-pub fn varint_len(v: u64) -> usize {
+pub const fn varint_len(v: u64) -> usize {
     if v <= 63 {
         1
     } else if v <= 16383 {
@@ -681,7 +681,7 @@ pub fn varint_len(v: u64) -> usize {
 }
 
 /// Returns how long the variable-length integer is, given its first byte.
-pub fn varint_parse_len(first: u8) -> usize {
+pub const fn varint_parse_len(first: u8) -> usize {
     match first >> 6 {
         0 => 1,
         1 => 2,

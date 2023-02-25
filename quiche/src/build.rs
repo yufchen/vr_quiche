@@ -32,9 +32,7 @@ const CMAKE_PARAMS_ARM_LINUX: &[(&str, &[(&str, &str)])] = &[
 /// so adjust library location based on platform and build target.
 /// See issue: https://github.com/alexcrichton/cmake-rs/issues/18
 fn get_boringssl_platform_output_path() -> String {
-    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap();
-
-    if target_env == "msvc" {
+    if cfg!(target_env = "msvc") {
         // Code under this branch should match the logic in cmake-rs
         let debug_env_var =
             std::env::var("DEBUG").expect("DEBUG variable not defined in env");
@@ -121,7 +119,7 @@ fn get_boringssl_cmake_config() -> cmake::Config {
                 ""
             };
 
-            let cflag = format!("{} {}", bitcode_cflag, target_cflag);
+            let cflag = format!("{bitcode_cflag} {target_cflag}");
 
             boringssl_cmake.define("CMAKE_ASM_FLAGS", &cflag);
             boringssl_cmake.cflag(&cflag);
@@ -157,18 +155,6 @@ fn get_boringssl_cmake_config() -> cmake::Config {
             _ => boringssl_cmake,
         },
 
-        "windows" => match arch.as_ref() {
-            "x86_64" => {
-                // Override _WIN32_WINNT to use 64bit APIs,
-                // such as GetTickCount64().
-                boringssl_cmake.cxxflag("-D_WIN32_WINNT=0x0600");
-
-                boringssl_cmake
-            },
-
-            _ => boringssl_cmake,
-        },
-
         _ => {
             // Configure BoringSSL for building on 32-bit non-windows platforms.
             if arch == "x86" && os != "windows" {
@@ -191,27 +177,26 @@ fn write_pkg_config() {
     let target_dir = target_dir_path();
 
     let out_path = target_dir.as_path().join("quiche.pc");
-    let mut out_file = std::fs::File::create(&out_path).unwrap();
+    let mut out_file = std::fs::File::create(out_path).unwrap();
 
-    let include_dir = format!("{}/include", manifest_dir);
+    let include_dir = format!("{manifest_dir}/include");
+
     let version = std::env::var("CARGO_PKG_VERSION").unwrap();
 
     let output = format!(
         "# quiche
 
-includedir={}
+includedir={include_dir}
 libdir={}
 
 Name: quiche
 Description: quiche library
 URL: https://github.com/cloudflare/quiche
-Version: {}
+Version: {version}
 Libs: -Wl,-rpath,${{libdir}} -L${{libdir}} -lquiche
 Cflags: -I${{includedir}}
 ",
-        include_dir,
         target_dir.to_str().unwrap(),
-        version
     );
 
     out_file.write_all(output.as_bytes()).unwrap();
@@ -242,15 +227,24 @@ fn main() {
                     .cxxflag("-DBORINGSSL_UNSAFE_FUZZER_MODE");
             }
 
-            cfg.build_target("bssl").build().display().to_string()
+            cfg.build_target("ssl").build();
+            cfg.build_target("crypto").build().display().to_string()
         });
 
         let build_path = get_boringssl_platform_output_path();
-        let build_dir = format!("{}/build/{}", bssl_dir, build_path);
-        println!("cargo:rustc-link-search=native={}", build_dir);
+        let mut build_dir = format!("{bssl_dir}/build/{build_path}");
 
-        println!("cargo:rustc-link-lib=static=ssl");
-        println!("cargo:rustc-link-lib=static=crypto");
+        // If build directory doesn't exist, use the specified path as is.
+        if !std::path::Path::new(&build_dir).is_dir() {
+            build_dir = bssl_dir;
+        }
+
+        println!("cargo:rustc-link-search=native={build_dir}");
+
+        let bssl_link_kind = std::env::var("QUICHE_BSSL_LINK_KIND")
+            .unwrap_or("static".to_string());
+        println!("cargo:rustc-link-lib={bssl_link_kind}=ssl");
+        println!("cargo:rustc-link-lib={bssl_link_kind}=crypto");
     }
 
     if cfg!(feature = "boringssl-boring-crate") {
