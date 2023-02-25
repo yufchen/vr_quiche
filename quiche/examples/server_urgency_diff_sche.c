@@ -117,7 +117,7 @@ static void debug_log(const char *line, void *argp) {
 }
 
 static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
-    printf("\nflush egress\n");
+    //printf("\nflush egress\n");
     static uint8_t out[MAX_DATAGRAM_SIZE];
 
     quiche_send_info send_info;
@@ -158,20 +158,20 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
 
 
         if (cur_stream_id >= 9 && cur_stream_id < 9 + 4 * gl_num_streams && flag && record_flag) {
-            tot_sent1 += sent;
-            fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior1, sent, tot_sent1, cur_stream_id);
+            //tot_sent1 += sent;
+            //fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior1, sent, tot_sent1, cur_stream_id);
             gl_out_ts_prior1[gl_out_cnt_prior1] = temp_time;
             gl_out_cnt_prior1 += 1;
         }
         else if (cur_stream_id >= 9 + 4 * gl_num_streams && cur_stream_id < 9 + 4 * gl_num_streams*2 && flag && record_flag) {
-            tot_sent2 += sent;
-            fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior2, sent, tot_sent2, cur_stream_id);
+            //tot_sent2 += sent;
+            //fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior2, sent, tot_sent2, cur_stream_id);
             gl_out_ts_prior2[gl_out_cnt_prior2] = temp_time;
             gl_out_cnt_prior2 += 1;
         }
         else if (cur_stream_id >= 9 + 4 * gl_num_streams*2 && cur_stream_id < 9 + 4 * gl_num_streams*3 && flag && record_flag) {
-            tot_sent3 += sent;
-            fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior3, sent, tot_sent3, cur_stream_id);
+            //tot_sent3 += sent;
+            //fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior3, sent, tot_sent3, cur_stream_id);
             gl_out_ts_prior3[gl_out_cnt_prior3] = temp_time;
             gl_out_cnt_prior3 += 1;
         }
@@ -495,7 +495,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                         int size = quiche_conn_stream_send_full(conn_io->conn, cur_stream_id,
                                                         foo_buffer, data_len_per_stream, true, 0,
                                                         k, cur_stream_id);
-                        fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n", getcurTime(), size, data_len_per_stream, cur_stream_id, k);
+                        //fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n", getcurTime(), size, data_len_per_stream, cur_stream_id, k);
                         cur_stream_id += 4;
                     }
                 }
@@ -503,7 +503,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
             }
             if (!flag){
                 //printf("Sent %d bytes.\n", (int)quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 10000, false));
-                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 30000, false);
+                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 100000, false);
             }
         }
 
