@@ -19,7 +19,7 @@ LDFLAGS = -L$(LIBCRYPTO_DIR) -L$(LIBSSL_DIR) -L$(LIB_DIR)
 
 LIBS = $(LIB_DIR)/libquiche.a -lev -ldl -pthread -lm
 
-all: client server server_urgency_diff_sche
+all: client server server_urgency_diff_sche server_urgency_diff_sche_overhead
 
 client: client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
@@ -28,6 +28,9 @@ server: server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
 server_urgency_diff_sche: server_urgency_diff_sche.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
+
+server_urgency_diff_sche_overhead: server_urgency_diff_sche_overhead.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
 http3-client: http3-client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
@@ -40,4 +43,4 @@ $(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs')
 	cd .. && cargo build --target-dir $(BUILD_DIR) --features ffi
 
 clean:
-	@$(RM) -rf client server http3-client server_urgency_diff_sche http3-server build/ *.dSYM/
+	@$(RM) -rf client server http3-client server_urgency_diff_sche server_urgency_diff_sche_overhead http3-server build/ *.dSYM/

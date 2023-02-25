@@ -6910,8 +6910,9 @@ impl Connection {
         };
         //println!("{cwin} is the Congestion Window available", cwin=cwin_available);
 
-        self.tx_cap =
-            cmp::min(cwin_available, self.max_tx_data - self.tx_data) as usize;
+        // self.tx_cap =
+        //     cmp::min(cwin_available, self.max_tx_data - self.tx_data) as usize;
+        self.tx_cap = (self.max_tx_data - self.tx_data) as usize;
     }
 
     fn delivery_rate_check_if_app_limited(&self) -> bool {
