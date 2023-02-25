@@ -79,6 +79,7 @@ long getcurTime() {
 
 bool record_flag = false;
 
+int gl_num_streams = -1;
 long gl_start_ts;
 long gl_out_ts_prior1[1000];
 int gl_out_cnt_prior1 = 0;
@@ -116,6 +117,7 @@ static void debug_log(const char *line, void *argp) {
 }
 
 static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
+    //printf("\nflush egress\n");
     static uint8_t out[MAX_DATAGRAM_SIZE];
 
     quiche_send_info send_info;
@@ -155,21 +157,21 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
         }
 
 
-        if (cur_stream_id == 9 && flag && record_flag) {
-            tot_sent1 += sent;
-            fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior1, sent, tot_sent1, cur_stream_id);
+        if (cur_stream_id >= 9 && cur_stream_id < 9 + 4 * gl_num_streams && flag && record_flag) {
+            //tot_sent1 += sent;
+            //fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior1, sent, tot_sent1, cur_stream_id);
             gl_out_ts_prior1[gl_out_cnt_prior1] = temp_time;
             gl_out_cnt_prior1 += 1;
         }
-        else if (cur_stream_id == 13 && flag && record_flag) {
-            tot_sent2 += sent;
-            fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior2, sent, tot_sent2, cur_stream_id);
+        else if (cur_stream_id >= 9 + 4 * gl_num_streams && cur_stream_id < 9 + 4 * gl_num_streams*2 && flag && record_flag) {
+            //tot_sent2 += sent;
+            //fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior2, sent, tot_sent2, cur_stream_id);
             gl_out_ts_prior2[gl_out_cnt_prior2] = temp_time;
             gl_out_cnt_prior2 += 1;
         }
-        else if (cur_stream_id == 17 && flag && record_flag) {
-            tot_sent3 += sent;
-            fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior3, sent, tot_sent3, cur_stream_id);
+        else if (cur_stream_id >= 9 + 4 * gl_num_streams*2 && cur_stream_id < 9 + 4 * gl_num_streams*3 && flag && record_flag) {
+            //tot_sent3 += sent;
+            //fprintf(stderr, "cnt: %d dgram sent %zd bytes, total %zd bytes, cur_id: %zd\n", gl_out_cnt_prior3, sent, tot_sent3, cur_stream_id);
             gl_out_ts_prior3[gl_out_cnt_prior3] = temp_time;
             gl_out_cnt_prior3 += 1;
         }
@@ -485,23 +487,23 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                 stop_sending = true;
 
                 printf("Start sending with priority\n");
+                int cur_stream_id = 9;
                 static uint8_t foo_buffer[50000] = {'\0'};
-                //urgency level 1  stream_id 9
-                int size = quiche_conn_stream_send_full(conn_io->conn, 9, foo_buffer, 50000, true, 0, 1, 0);
-                fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n", getcurTime(), size, 50000, 9, 1);
-                //urgency level 2  stream_id 13
-                size = quiche_conn_stream_send_full(conn_io->conn, 13, foo_buffer, 50000, true, 0, 2, 0);
-                fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n", getcurTime(), size, 50000, 13, 2);
-                //urgency level 3  stream_id 17
-                size = quiche_conn_stream_send_full(conn_io->conn, 17, foo_buffer, 50000, true, 0, 3, 0);
-                fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n", getcurTime(), size, 50000, 17, 3);
+                int data_len_per_stream = 50000 / gl_num_streams;
+                for (int k = 1; k <= 3; k++) { // k: current urgency level
+                    for (int i = 0; i < gl_num_streams; i++) {
+                        int size = quiche_conn_stream_send_full(conn_io->conn, cur_stream_id,
+                                                        foo_buffer, data_len_per_stream, true, 0,
+                                                        k, cur_stream_id);
+                        //fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n", getcurTime(), size, data_len_per_stream, cur_stream_id, k);
+                        cur_stream_id += 4;
+                    }
+                }
                 gl_start_ts = getcurTime();
-
-
             }
             if (!flag){
                 //printf("Sent %d bytes.\n", (int)quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 10000, false));
-                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 30000, false);
+                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 100000, false);
             }
         }
 
@@ -580,8 +582,8 @@ int main(int argc, char *argv[]) {
     peace = 0;
     stop_sending = false;
 
-
-    const char *log_file = argv[3];
+    sscanf(argv[3], "%d", &gl_num_streams);
+    const char *log_file = argv[4];
     fp = fopen(log_file, "w");
     if(fp == NULL)
         exit(0);
