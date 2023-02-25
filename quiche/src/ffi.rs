@@ -325,6 +325,25 @@ pub extern fn quiche_config_set_cc_algorithm(
 }
 
 #[no_mangle]
+pub extern fn quiche_config_set_scheduler_name(
+    config: &mut Config, name: *const c_char,
+) -> c_int {
+    let name = unsafe { ffi::CStr::from_ptr(name).to_str().unwrap() };
+    match config.set_scheduler_name(name) {
+        Ok(_) => 0,
+        Err(e) => e.to_c() as c_int,
+    }
+}
+
+#[no_mangle]
+pub extern fn quiche_config_set_scheduler_type(
+    config: &mut Config, sche: scheduler::SchedulerType,
+) {
+    config.set_scheduler_type(sche);
+}
+
+
+#[no_mangle]
 pub extern fn quiche_config_enable_hystart(config: &mut Config, v: bool) {
     config.enable_hystart(v);
 }
@@ -495,7 +514,7 @@ pub extern fn quiche_connect(
 
     let local = std_addr_from_c(local, local_len);
     let peer = std_addr_from_c(peer, peer_len);
-
+    eprintln!("connect peer {}", peer);
     match connect(server_name, &scid, local, peer, config) {
         Ok(c) => Box::into_raw(Box::new(c)),
 
@@ -772,6 +791,23 @@ pub extern fn quiche_conn_stream_recv(
     *fin = out_fin;
 
     out_len as ssize_t
+}
+
+#[no_mangle]
+pub extern fn quiche_conn_stream_send_full(
+    conn: &mut Connection, stream_id: u64, buf: *const u8, buf_len: size_t,
+    fin: bool, deadline: u64, priority: u64, depend_id: u64,
+) -> ssize_t {
+    if buf_len > <ssize_t>::max_value() as usize {
+        panic!("The provided buffer is too large");
+    }
+    let buf = unsafe { slice::from_raw_parts(buf, buf_len) };
+    match conn
+        .stream_send_full(stream_id, buf, fin, deadline, priority, depend_id)
+    {
+        Ok(v) => v as ssize_t,
+        Err(e) => e.to_c(),
+    }
 }
 
 #[no_mangle]

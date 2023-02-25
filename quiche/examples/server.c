@@ -78,11 +78,10 @@ long getcurTime() {
 }
 
 bool record_flag = false;
-long gl_stream_start_ts;
+long gl_start_ts;
 long gl_stream_out_ts[1000];
 int gl_stream_out_cnt = 0;
 
-long gl_dgram_start_ts;
 long gl_dgram_out_ts[1000];
 int gl_dgram_out_cnt = 0;
 
@@ -495,22 +494,15 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                 char buf_dgram_rnd[1310] = {'\0'};
 
 
-                //fprintf(fp, "Sent the %d stream: %u %d\n", num_times+1, t.tv_sec, t.tv_usec);
-                //fprintf(stderr, "Sent the %d stream: %u %d\n", num_times+1, t.tv_sec, t.tv_usec);
                 printf("Max Datagram Writable %d bytes\n",(int)quiche_conn_dgram_max_writable_len(conn_io->conn));
-                //fprintf(fp, "%ld, dgram start time\n", getcurTime());
-                gl_dgram_start_ts = getcurTime();
                 for(int i = 0; i < 38;i++) {
                     //printf("Sent Datagram %d bytes\n", (int)quiche_conn_dgram_send(conn_io->conn, (uint8_t *) buf_dgram_rnd, 1000));
                     quiche_conn_dgram_send(conn_io->conn, (uint8_t *) buf_dgram_rnd, 1310);
                 }
                 quiche_conn_dgram_send(conn_io->conn, (uint8_t *) buf_dgram_rnd, 220);
-                //printf("Sent %d bytes.\n", (int)quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) buf_rnd, 50000, false));
-                //fprintf(fp, "%ld, stream start time\n", getcurTime());
 
-                gl_stream_start_ts = getcurTime();
                 quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) buf_rnd, 50000, false);
-
+                gl_start_ts = getcurTime();
             }
             if (!flag){
                 //printf("Sent %d bytes.\n", (int)quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 10000, false));
@@ -567,8 +559,8 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
             fprintf(fp, "Error: incorrect number of dgram out, current: %d", gl_dgram_out_cnt);
         }
 
-        fprintf(fp, "%ld, dgram start time, cnt: %d\n", gl_dgram_start_ts, gl_dgram_out_cnt);
-        fprintf(fp, "%ld, stream start time, cnt: %d\n", gl_stream_start_ts, gl_stream_out_cnt);
+        fprintf(fp, "%ld, dgram start time, cnt: %d\n", gl_start_ts, gl_dgram_out_cnt);
+        fprintf(fp, "%ld, stream start time, cnt: %d\n", gl_start_ts, gl_stream_out_cnt);
 
 
 

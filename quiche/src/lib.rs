@@ -376,6 +376,7 @@ use std::str::FromStr;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
+pub use crate::scheduler::SchedulerType;
 static mut my_dgram_send_times: i64 = 0;
 
 use smallvec::SmallVec;
@@ -526,6 +527,9 @@ pub enum Error {
 
     /// Not enough available identifiers.
     OutOfIdentifiers,
+
+    /// Error in scheduler type
+    SchedulerType,
 }
 
 impl Error {
@@ -563,6 +567,7 @@ impl Error {
             Error::StreamReset { .. } => -16,
             Error::IdLimit => -17,
             Error::OutOfIdentifiers => -18,
+            Error::SchedulerType => -19,
         }
     }
 }
@@ -682,6 +687,11 @@ pub struct Config {
     max_stream_window: u64,
 
     disable_dcid_reuse: bool,
+
+
+    /// Type of the scheduler
+    /// default: scheduler::SchedulerType::Dynamic
+    scheduler_type: scheduler::SchedulerType,
 }
 
 // See https://quicwg.org/base-drafts/rfc9000.html#section-15
@@ -740,6 +750,7 @@ impl Config {
             max_stream_window: stream::MAX_STREAM_WINDOW,
 
             disable_dcid_reuse: false,
+            scheduler_type: SchedulerType::Dynamic, // default scheduler
         })
     }
 
@@ -1070,6 +1081,14 @@ impl Config {
     /// The default value is `CongestionControlAlgorithm::CUBIC`.
     pub fn set_cc_algorithm(&mut self, algo: CongestionControlAlgorithm) {
         self.cc_algorithm = algo;
+    }
+
+    pub fn set_scheduler_name(&mut self, name: &str) -> Result<()> {
+        self.scheduler_type = SchedulerType::from_str(name)?;
+        Ok(())
+    }
+    pub fn set_scheduler_type(&mut self, sche: SchedulerType) {
+        self.scheduler_type = sche;
     }
 
     /// Configures whether to enable HyStart++.
@@ -1693,6 +1712,7 @@ impl Connection {
                 config.local_transport_params.initial_max_streams_bidi,
                 config.local_transport_params.initial_max_streams_uni,
                 config.max_stream_window,
+                config,
             ),
 
             odcid: None,
@@ -3838,7 +3858,24 @@ impl Connection {
             self.paths.get(send_pid)?.active() &&
             !dgram_emitted
         {
-            while let Some(stream_id) = self.streams.peek_flushable() {
+            // // // log network and cc stats
+            // let rtt = self.paths.get(send_pid)?.recovery.rtt().as_millis() as f64;
+            // let bandwidth = self.paths.get(send_pid)?.recovery.pacer.rate() as f64; // bytes / sec
+            // let now_time_ms = match time::SystemTime::now()
+            //     .duration_since(time::SystemTime::UNIX_EPOCH)
+            // {
+            //     Ok(n) => n.as_millis(),
+            //     Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+            // };
+            // //eprintln!("{} ms; bw: {} Bytes/s; rtt: {} ms; ", now_time_ms, bandwidth, rtt);
+            //
+            // while let Some(stream_id) = self.streams.peek_flushable(
+            //     bandwidth as f64,
+            //     rtt,
+            //     pn, // next_packet_id
+            //     now_time_ms as u64,
+            // ) {
+            while let Some(stream_id) = self.streams.pop_flushable() {
                 let stream = match self.streams.get_mut(stream_id) {
                     // Avoid sending frames for streams that were already stopped.
                     //
@@ -4365,6 +4402,19 @@ impl Connection {
     pub fn stream_send(
         &mut self, stream_id: u64, buf: &[u8], fin: bool,
     ) -> Result<usize> {
+        self.stream_send_full(
+            stream_id,
+            buf,
+            fin,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            stream_id, // default: no depend
+        )
+    }
+    pub fn stream_send_full(
+        &mut self, stream_id: u64, buf: &[u8], fin: bool, deadline: u64,
+        priority: u64, depend_id: u64,
+    ) -> Result<usize> {
         // We can't write on the peer's unidirectional streams.
         if !stream::is_bidi(stream_id) &&
             !stream::is_local(stream_id, self.is_server)
@@ -4403,7 +4453,7 @@ impl Connection {
         };
 
         // Get existing stream or create a new one.
-        let stream = self.get_or_create_stream(stream_id, true)?;
+        let stream = self.get_or_create_stream_full(stream_id, true, deadline, priority, depend_id,)?;
 
         #[cfg(feature = "qlog")]
         let offset = stream.send.off_back();
@@ -6260,12 +6310,28 @@ impl Connection {
     fn get_or_create_stream(
         &mut self, id: u64, local: bool,
     ) -> Result<&mut stream::Stream> {
+        self.get_or_create_stream_full(
+            id,
+            local,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            id,
+        )
+    }
+    /// Create stream with deadline and priority.
+    fn get_or_create_stream_full(
+        &mut self, id: u64, local: bool, deadline: u64, priority: u64,
+        depend_id: u64,
+    ) -> Result<&mut stream::Stream> {
         self.streams.get_or_create(
             id,
             &self.local_transport_params,
             &self.peer_transport_params,
             local,
             self.is_server,
+            deadline,
+            priority,
+            depend_id,
         )
     }
 
@@ -15079,3 +15145,4 @@ mod ranges;
 mod recovery;
 mod stream;
 mod tls;
+mod scheduler;
