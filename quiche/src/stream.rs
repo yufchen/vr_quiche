@@ -1346,7 +1346,7 @@ impl SendBuf {
         // Get the stream send capacity. This will return an error if the stream
         // was stopped.
         let capacity = self.cap()?;
-
+        //println!("stream write {}", capacity);
         if data.len() > capacity {
             // Truncate the input buffer according to the stream's capacity.
             let len = capacity;
@@ -1359,6 +1359,7 @@ impl SendBuf {
         if let Some(fin_off) = self.fin_off {
             // Can't write past final offset.
             if max_off > fin_off {
+                //println!("max_off {} fin_off {}", max_off, fin_off);
                 return Err(Error::FinalSize);
             }
 

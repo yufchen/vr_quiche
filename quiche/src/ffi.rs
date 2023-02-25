@@ -862,6 +862,18 @@ pub extern fn quiche_conn_stream_capacity(
 }
 
 #[no_mangle]
+pub extern fn quiche_conn_find_my_cur_stream_id(
+    conn: &Connection
+) -> ssize_t {
+    match conn.find_my_cur_stream_id() {
+        Ok(v) => v as ssize_t,
+
+        Err(e) => e.to_c(),
+    }
+}
+
+
+#[no_mangle]
 pub extern fn quiche_conn_stream_readable(
     conn: &Connection, stream_id: u64,
 ) -> bool {

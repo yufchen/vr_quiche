@@ -1346,6 +1346,10 @@ pub struct Connection {
     /// Whether the connection should prevent from reusing destination
     /// Connection IDs when the peer migrates.
     disable_dcid_reuse: bool,
+
+
+    /// My use
+    my_cur_stream_id: u64,
 }
 
 /// Creates a new server-side connection.
@@ -1617,6 +1621,8 @@ impl Connection {
         Connection::with_tls(scid, odcid, local, peer, config, tls, is_server)
     }
 
+
+
     fn with_tls(
         scid: &ConnectionId, odcid: Option<&ConnectionId>, local: SocketAddr,
         peer: SocketAddr, config: &mut Config, tls: tls::Handshake,
@@ -1781,6 +1787,8 @@ impl Connection {
             emit_dgram: true,
 
             disable_dcid_reuse: config.disable_dcid_reuse,
+
+            my_cur_stream_id: 0,
         };
 
         if let Some(odcid) = odcid {
@@ -1834,6 +1842,9 @@ impl Connection {
 
         Ok(conn)
     }
+
+
+
 
     /// Sets keylog output to the designated [`Writer`].
     ///
@@ -3881,7 +3892,10 @@ impl Connection {
                     //
                     // This might happen if stream data was buffered but not yet
                     // flushed on the wire when a STOP_SENDING frame is received.
-                    Some(v) if !v.send.is_stopped() => v,
+                    Some(v) if !v.send.is_stopped() => {
+                        self.my_cur_stream_id = stream_id;
+                        v
+                    },
                     _ => {
                         self.streams.remove_flushable();
                         continue;
@@ -4442,16 +4456,13 @@ impl Connection {
             return Err(Error::Done);
         }
 
-        if cap < buf.len() {
-            //println!("LIMIT IS DEFINITELY MORE");
-        }
-
         let (buf, fin) = if cap < buf.len() {
             (&buf[..cap], false)
         } else {
             (buf, fin)
         };
 
+        //println!("buf len {}, cap {}", buf.len(), cap);
         // Get existing stream or create a new one.
         let stream = self.get_or_create_stream_full(stream_id, true, deadline, priority, depend_id,)?;
 
@@ -4465,6 +4476,7 @@ impl Connection {
 
             Err(e) => {
                 self.streams.mark_writable(stream_id, false);
+                println!("error1");
                 return Err(e);
             },
         };
@@ -4674,6 +4686,9 @@ impl Connection {
         stream.is_readable()
     }
 
+    pub fn find_my_cur_stream_id(&self) -> Result<u64> {
+        return Ok(self.my_cur_stream_id);
+    }
     /// Returns true if the stream has enough send capacity.
     ///
     /// When `len` more bytes can be buffered into the given stream's send
