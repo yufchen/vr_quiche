@@ -80,12 +80,12 @@ static int gl_static_policy = -1;
 
 //for ts log params
 FILE * gl_fp_ts = NULL;
-long gl_stream_in_ts[1000];
-long gl_stream1_out_ts[1000];
-int gl_stream1_out_cnt = 0;
+static long gl_start_ts;
+static long gl_stream1_out_ts[50000000];
+static int gl_stream1_out_cnt = 0;
 
-long gl_stream2_out_ts[1000];
-int gl_stream2_out_cnt = 0;
+static long gl_stream2_out_ts[50000000];
+static int gl_stream2_out_cnt = 0;
 
 
 
@@ -131,7 +131,6 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
     while (1) {
         if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
             if (gl_is_recving) {
-
                 break; // always do recv first
             }
         }
@@ -170,17 +169,19 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
         if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE && cur_stream_id >= 9) {
             int data_type = ((cur_stream_id - 9) / 4) % 2;
             if (data_type == 0) {
-                gl_stream1_out_ts[gl_stream1_out_cnt] = temp_time;
+                gl_stream1_out_ts[gl_stream1_out_cnt] = temp_time - gl_start_ts;
                 gl_stream1_out_cnt += 1;
             }
             else if (data_type == 1) {
-                gl_stream2_out_ts[gl_stream2_out_cnt] = temp_time;
+                gl_stream2_out_ts[gl_stream2_out_cnt] = temp_time - gl_start_ts;
                 gl_stream2_out_cnt += 1;
             }
             if (gl_if_debug == 1) {
                 fprintf(stderr,
                         "%ld, stream_id: %zd, data_type: %d, flush egress written size: %zd bytes, sent size: %zd bytes; total: %d bytes, cnt %d\n",
                         getcurTime(), cur_stream_id, data_type, written, sent, gl_debug_total_size, send_times);
+                fprintf(stderr,
+                        "%d %d\n",gl_stream1_out_cnt, gl_stream2_out_cnt);
             }
         }
 
@@ -361,8 +362,8 @@ void pipeline_th_call(gpointer data) {
         //10000 streams sends through
         //send data every 1000 ms, each stream send data 1MB
         static int sleep_ms = 1000;
-        static uint8_t foo_buffer[1000];
-        int data_len_per_stream = 1000;
+        static uint8_t foo_buffer[1000000];
+        int data_len_per_stream = 1000000;
 
         int cur_stream_id = 9;
         int urgency1;
@@ -385,10 +386,10 @@ void pipeline_th_call(gpointer data) {
         //wait for empty que
         usleep(10000 * 1000);
         //start sending
-        for (int k = 1; k <= 100; k++) {
+        for (int k = 1; k <= 50; k++) {
             g_mutex_lock(gl_mutex);
-            gl_stream_in_ts[k-1] = getcurTime();
-            if (k != 100) {
+            gl_start_ts = getcurTime();
+            if (k != 50) {
                 size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, false, 100, urgency1, cur_stream_id);
                 if (gl_if_debug) {
                     fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d, static prior: %d\n", getcurTime(), size,
@@ -416,8 +417,8 @@ void pipeline_th_call(gpointer data) {
         //end of sending
         usleep(10000 * 1000);
         for (int i = 0; i < gl_stream1_out_cnt; i++){
-            fprintf(gl_fp_ts, "stream prior1 ts in %ld, out %ld, cnt: %d\n", gl_stream_in_ts[i], gl_stream1_out_ts[i], i);
-            fprintf(gl_fp_ts, "stream prior2 ts in %ld, out %ld, cnt: %d\n", gl_stream_in_ts[i], gl_stream1_out_ts[i], i);
+            fprintf(gl_fp_ts, "stream prior1 queuing delay %ld, cnt: %d\n", gl_stream1_out_ts[i], i);
+            fprintf(gl_fp_ts, "stream prior2 queuing delay %ld, cnt: %d\n", gl_stream1_out_ts[i], i);
         }
         fclose(gl_fp_ts);
         fprintf(stdout, "End of logging\n");
