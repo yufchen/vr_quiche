@@ -124,14 +124,10 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
             send_times = 0;
             send_size = 0;
         }
-        g_mutex_lock(gl_mutex);
     }
     while (1) {
-
         if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
-            if (send_times > MAX_SEND_TIMES && send_size > MAX_SEND_SIZE) {
-                break;//let recv get chance
-            }
+            g_mutex_lock(gl_mutex);
         }
         ssize_t written = quiche_conn_send(conn_io->conn, out, sizeof(out), &send_info);
         long temp_time = getcurTime();
@@ -185,10 +181,11 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
 
         send_times += 1;
         send_size += sent;
+        if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
+            g_mutex_unlock(gl_mutex);
+        }
     }
-    if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
-        g_mutex_unlock(gl_mutex);
-    }
+
 }
 
 static void mint_token(const uint8_t *dcid, size_t dcid_len,
@@ -720,11 +717,11 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             quiche_path_stats path_stats;
             quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
             //printf("\ncur cwnd = %zu\n", path_stats.cwnd);
-            if (path_stats.cwnd > 130000) { //skip slow start phase, for 20Mbps
+            if (path_stats.cwnd > 20000) { //skip slow start phase, for 256Mbps, 10ms delay => cwnd 20000
                 init_sending = false;
             }
             else {
-                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 100000, false);
+                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 10000, false);
             }
 
         }
