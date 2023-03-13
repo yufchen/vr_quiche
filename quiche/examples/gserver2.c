@@ -65,6 +65,7 @@ struct conn_io {
 int gl_debug_total_size = 0;
 
 /* Global variables */
+static bool gl_is_recving = false;
 GMainLoop *gl_gstreamer_send_main_loop = NULL;
 SampleHandlerUserData *gl_pipeline_infos = NULL;
 static int gl_use_dgram = -1;
@@ -115,8 +116,8 @@ static void debug_log(const char *line, void *argp) {
 
 static void flush_egress(struct conn_io *conn_io, bool is_recv) {
     static uint8_t out[MAX_DATAGRAM_SIZE];
-    static int send_times = 0;
-    static int send_size = 0;
+//    static int send_times = 0;
+//    static int send_size = 0;
 
     quiche_send_info send_info;
     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
@@ -124,10 +125,13 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
             send_times = 0;
             send_size = 0;
         }
+        g_mutex_lock(gl_mutex);
     }
     while (1) {
         if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
-            g_mutex_lock(gl_mutex);
+            if (gl_is_recving) {
+                break; // always do recv first
+            }
         }
         ssize_t written = quiche_conn_send(conn_io->conn, out, sizeof(out), &send_info);
         long temp_time = getcurTime();
@@ -178,14 +182,10 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
             }
         }
 
-
-        send_times += 1;
-        send_size += sent;
-        if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
-            g_mutex_unlock(gl_mutex);
-        }
     }
-
+    if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
+        g_mutex_unlock(gl_mutex);
+    }
 }
 
 static void mint_token(const uint8_t *dcid, size_t dcid_len,
@@ -454,6 +454,7 @@ void start_th_pipelines() {
 }
 
 static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer data) {
+    gl_is_recving = true;
     //fprintf(stderr, "%ld, recv cb\n", getcurTime());
     static bool ready_to_send = false;
     static bool is_sending = false;
@@ -725,6 +726,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             }
 
         }
+
         flush_egress(conn_io, true);//send ack frame, etc
         if (quiche_conn_is_closed(conn_io->conn)) {
 //            quiche_stats stats;
@@ -767,7 +769,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
         }
 
     }
-
+    gl_is_recving = false;
     return TRUE;
 }
 
