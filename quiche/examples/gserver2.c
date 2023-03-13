@@ -116,8 +116,8 @@ static void debug_log(const char *line, void *argp) {
 
 static void flush_egress(struct conn_io *conn_io, bool is_recv) {
     static uint8_t out[MAX_DATAGRAM_SIZE];
-//    static int send_times = 0;
-//    static int send_size = 0;
+    static int send_times = 0;
+    static int send_size = 0;
 
     quiche_send_info send_info;
     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
@@ -182,6 +182,9 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
             }
         }
 
+
+        send_times += 1;
+        send_size += sent;
     }
     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
         g_mutex_unlock(gl_mutex);
