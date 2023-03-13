@@ -115,6 +115,7 @@ static void debug_log(const char *line, void *argp) {
 }
 
 static void flush_egress(struct conn_io *conn_io, bool is_recv) {
+    //fprintf(stdout, "Call flush_egress\n");
     static uint8_t out[MAX_DATAGRAM_SIZE];
     static int send_times = 0;
     static int send_size = 0;
@@ -130,6 +131,7 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
     while (1) {
         if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
             if (gl_is_recving) {
+
                 break; // always do recv first
             }
         }
@@ -181,7 +183,6 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
                         getcurTime(), cur_stream_id, data_type, written, sent, gl_debug_total_size, send_times);
             }
         }
-
 
         send_times += 1;
         send_size += sent;
@@ -457,7 +458,6 @@ void start_th_pipelines() {
 }
 
 static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer data) {
-    gl_is_recving = true;
     //fprintf(stderr, "%ld, recv cb\n", getcurTime());
     static bool ready_to_send = false;
     static bool is_sending = false;
@@ -470,6 +470,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
 
     while (1) {
         if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
+            gl_is_recving = true;
             g_mutex_lock(gl_mutex);
         }
 
@@ -486,6 +487,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                 //fprintf(stderr, "recv would block\n");
                 if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                     g_mutex_unlock(gl_mutex);
+                    gl_is_recving = false;
                 }
                 break;
             }
@@ -493,6 +495,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             perror("failed to read");
             if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                 g_mutex_unlock(gl_mutex);
+                gl_is_recving = false;
             }
             return FALSE;
         }
@@ -519,6 +522,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             fprintf(stderr, "failed to parse header: %d\n", rc);
             if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                 g_mutex_unlock(gl_mutex);
+                gl_is_recving = false;
             }
             continue;
         }
@@ -538,6 +542,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                             written);
                     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                         g_mutex_unlock(gl_mutex);
+                        gl_is_recving = false;
                     }
                     continue;
                 }
@@ -549,12 +554,14 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                     perror("failed to send");
                     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                         g_mutex_unlock(gl_mutex);
+                        gl_is_recving = false;
                     }
                     continue;
                 }
                 //fprintf(stderr, "%ld, sent %zd bytes\n", getcurTime(), sent);
                 if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                     g_mutex_unlock(gl_mutex);
+                    gl_is_recving = false;
                 }
                 continue;
             }
@@ -570,6 +577,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                 if (gen_cid(new_cid, LOCAL_CONN_ID_LEN) == NULL) {
                     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                         g_mutex_unlock(gl_mutex);
+                        gl_is_recving = false;
                     }
                     continue;
                 }
@@ -585,6 +593,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                             written);
                     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                         g_mutex_unlock(gl_mutex);
+                        gl_is_recving = false;
                     }
                     continue;
                 }
@@ -596,12 +605,14 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                     perror("failed to send");
                     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                         g_mutex_unlock(gl_mutex);
+                        gl_is_recving = false;
                     }
                     continue;
                 }
                 //fprintf(stderr, "%ld, sent %zd bytes\n", getcurTime(), sent);
                 if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                     g_mutex_unlock(gl_mutex);
+                    gl_is_recving = false;
                 }
                 continue;
             }
@@ -612,6 +623,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                 fprintf(stderr, "invalid address validation token\n");
                 if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                     g_mutex_unlock(gl_mutex);
+                    gl_is_recving = false;
                 }
                 continue;
             }
@@ -623,6 +635,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             if (conn_io == NULL) {
                 if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                     g_mutex_unlock(gl_mutex);
+                    gl_is_recving = false;
                 }
                 continue;
             }
@@ -643,6 +656,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             fprintf(stderr, "failed to process packet: %zd\n", done);
             if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                 g_mutex_unlock(gl_mutex);
+                gl_is_recving = false;
             }
             continue;
         }
@@ -656,6 +670,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                 if (recv_len < 0) {
                     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                         g_mutex_unlock(gl_mutex);
+                        gl_is_recving = false;
                     }
                     return FALSE;
                 }
@@ -674,6 +689,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                     if (recv_len < 0) {
                         if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
                             g_mutex_unlock(gl_mutex);
+                            gl_is_recving = false;
                         }
                         fprintf(stdout, "recv len <0");
                         return FALSE;
@@ -712,6 +728,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
         }
         if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
             g_mutex_unlock(gl_mutex);
+            gl_is_recving = false;
         }
     }
 
@@ -722,6 +739,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
             //printf("\ncur cwnd = %zu\n", path_stats.cwnd);
             if (path_stats.cwnd > 20000) { //skip slow start phase, for 256Mbps, 10ms delay => cwnd 20000
+                printf("Start real sending, cur cwnd = %zu\n", path_stats.cwnd);
                 init_sending = false;
             }
             else {
@@ -772,7 +790,6 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
         }
 
     }
-    gl_is_recving = false;
     return TRUE;
 }
 
