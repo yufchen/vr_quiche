@@ -81,10 +81,10 @@ static int gl_static_policy = -1;
 //for ts log params
 FILE * gl_fp_ts = NULL;
 static long gl_start_ts;
-static long gl_stream1_out_ts[50000000];
+static long gl_stream1_out_ts[100000000];
 static int gl_stream1_out_cnt = 0;
 
-static long gl_stream2_out_ts[50000000];
+static long gl_stream2_out_ts[100000000];
 static int gl_stream2_out_cnt = 0;
 
 
@@ -386,10 +386,10 @@ void pipeline_th_call(gpointer data) {
         //wait for empty que
         usleep(10000 * 1000);
         //start sending
-        for (int k = 1; k <= 50; k++) {
+        for (int k = 1; k <= 100; k++) {
             g_mutex_lock(gl_mutex);
             gl_start_ts = getcurTime();
-            if (k != 50) {
+            if (k != 100) {
                 size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, false, 100, urgency1, cur_stream_id);
                 if (gl_if_debug) {
                     fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d, static prior: %d\n", getcurTime(), size,
@@ -418,7 +418,7 @@ void pipeline_th_call(gpointer data) {
         usleep(10000 * 1000);
         for (int i = 0; i < gl_stream1_out_cnt; i++){
             fprintf(gl_fp_ts, "stream prior1 queuing delay %ld, cnt: %d\n", gl_stream1_out_ts[i], i);
-            fprintf(gl_fp_ts, "stream prior2 queuing delay %ld, cnt: %d\n", gl_stream1_out_ts[i], i);
+            fprintf(gl_fp_ts, "stream prior2 queuing delay %ld, cnt: %d\n", gl_stream2_out_ts[i], i);
         }
         fclose(gl_fp_ts);
         fprintf(stdout, "End of logging\n");
@@ -700,27 +700,27 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                         gl_recv_conn_io = conn_io;
                         init_sending = true;
                         // For SYN APP
- /*                       if (gl_app_type == APP_SYNTHETIC_DATA) {
-                            //TODO: send same data on different streams
-                            int cur_stream_id = 9;
-                            static uint8_t foo_buffer[50000000]; //50MB
-                            int data_len_per_stream = 50000000 / gl_num_streams;
-                            for (int k = 1; k <= 3; k++) { // k: current urgency level
-                                for (int i = 0; i < gl_num_streams; i++) {
-                                    int size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id,
-                                                                            foo_buffer, data_len_per_stream, true, 0,
-                                                                            k, 0);
-                                    //int size = quiche_conn_stream_send(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true);
-                                    if (gl_if_debug) {
-                                        fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n",
-                                                getcurTime(),
-                                                size, data_len_per_stream, cur_stream_id, k);
-                                    }
-                                    cur_stream_id += 4;
-                                }
-                            }
-                        }
-*/
+                        /*                       if (gl_app_type == APP_SYNTHETIC_DATA) {
+                                                   //TODO: send same data on different streams
+                                                   int cur_stream_id = 9;
+                                                   static uint8_t foo_buffer[50000000]; //50MB
+                                                   int data_len_per_stream = 50000000 / gl_num_streams;
+                                                   for (int k = 1; k <= 3; k++) { // k: current urgency level
+                                                       for (int i = 0; i < gl_num_streams; i++) {
+                                                           int size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id,
+                                                                                                   foo_buffer, data_len_per_stream, true, 0,
+                                                                                                   k, 0);
+                                                           //int size = quiche_conn_stream_send(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true);
+                                                           if (gl_if_debug) {
+                                                               fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d on urgency %d\n",
+                                                                       getcurTime(),
+                                                                       size, data_len_per_stream, cur_stream_id, k);
+                                                           }
+                                                           cur_stream_id += 4;
+                                                       }
+                                                   }
+                                               }
+                       */
                     }
                 }
                 quiche_stream_iter_free(readable);
@@ -739,12 +739,12 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             quiche_path_stats path_stats;
             quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
             //printf("\ncur cwnd = %zu\n", path_stats.cwnd);
-            if (path_stats.cwnd > 20000) { //skip slow start phase, for 256Mbps, 10ms delay => cwnd 20000
+            if (path_stats.cwnd > 100000) { //skip slow start phase, for 256Mbps, 10ms delay => cwnd 20000
                 printf("Start real sending, cur cwnd = %zu\n", path_stats.cwnd);
                 init_sending = false;
             }
             else {
-                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 10000, false);
+                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 50000, false);
             }
 
         }
