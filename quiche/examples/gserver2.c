@@ -381,7 +381,8 @@ void pipeline_th_call(gpointer data) {
             printf("gl_static policy error %d\n", gl_static_policy);
             return;
         }
-
+        //wait for empty que
+        usleep(10000 * 1000);
         //start sending
         for (int k = 1; k <= 100; k++) {
             g_mutex_lock(gl_mutex);
@@ -716,10 +717,14 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
     HASH_ITER(hh, gl_conns->h, conn_io, tmp) {
         if (ready_to_send && quiche_conn_is_established(conn_io->conn) && init_sending) {
             static const char resp2[100000] = {'\0'};
-            ssize_t stream_cap = quiche_conn_stream_capacity(conn_io->conn, 4);
-            printf("\nStream Cap: %d\n", stream_cap);
-            if (stream_cap > 130000) { //skip slow start phase, for 20Mbps
+            quiche_path_stats path_stats;
+            quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
+            //printf("\ncur cwnd = %zu\n", path_stats.cwnd);
+            if (path_stats.cwnd > 130000) { //skip slow start phase, for 20Mbps
                 init_sending = false;
+            }
+            else {
+                quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 100000, false);
             }
 
         }
