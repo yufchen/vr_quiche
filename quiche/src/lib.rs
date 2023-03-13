@@ -3845,7 +3845,7 @@ impl Connection {
                                     in_flight = true;
                                     dgram_emitted = true;
                                     unsafe {
-                                        my_dgram_send_times = (my_dgram_send_times + 1) % 1;
+                                        my_dgram_send_times = (my_dgram_send_times + 1) % 1; // 1=dgram first?
                                     }
                                 }
                             },

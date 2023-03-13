@@ -75,14 +75,30 @@ static int gl_num_streams = -1;
 static int gl_num_urgency = -1;
 static int gl_app_syn_period_new_stream = -1;
 static int gl_urgency_step = -1;
+static int gl_static_policy = -1;
+
+//for ts log params
+FILE * gl_fp_ts = NULL;
+long gl_stream_in_ts[1000];
+long gl_stream1_out_ts[1000];
+int gl_stream1_out_cnt = 0;
+
+long gl_stream2_out_ts[1000];
+int gl_stream2_out_cnt = 0;
+
+
+
+
 
 
 static quiche_config *gl_config = NULL; //quic config
 static struct connections *gl_conns = NULL; //!!! when multiple connections, now there is only 1
 static GMutex *gl_mutex = NULL;
 static GThread **gl_pipeline_threads = NULL;
-
 struct conn_io * gl_recv_conn_io = NULL; //store client info for later use
+
+
+
 
 
 long getcurTime() {
@@ -111,12 +127,16 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
         g_mutex_lock(gl_mutex);
     }
     while (1) {
-        if (gl_app_type == APP_H264_DATA) {
+
+        if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
             if (send_times > MAX_SEND_TIMES && send_size > MAX_SEND_SIZE) {
-                break;
+                break;//let recv get chance
             }
         }
         ssize_t written = quiche_conn_send(conn_io->conn, out, sizeof(out), &send_info);
+        long temp_time = getcurTime();
+        ssize_t cur_stream_id = quiche_conn_find_my_cur_stream_id(conn_io->conn);
+
 
         if (written == QUICHE_ERR_DONE) {
             //fprintf(stderr, "%ld, flush egress done writing\n", getcurTime());
@@ -134,15 +154,34 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
                               send_info.to_len);
 
         gl_debug_total_size += sent;
-        if (gl_if_debug == 1) {
-            fprintf(stderr,
-                    "%ld, flush egress written size: %zd bytes, sent size: %zd bytes; total: %d bytes, cnt %d\n",
-                    getcurTime(), written, sent, gl_debug_total_size, send_times);
-        }
+//        if (gl_if_debug == 1) {
+//            fprintf(stderr,
+//                    "%ld, flush egress written size: %zd bytes, sent size: %zd bytes; total: %d bytes, cnt %d\n",
+//                    getcurTime(), written, sent, gl_debug_total_size, send_times);
+//        }
         if (sent != written) {
-            //perror("flush egress failed to send");
+            perror("flush egress failed to send");
             break;
         }
+
+
+        if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE && cur_stream_id >= 9) {
+            int data_type = ((cur_stream_id - 9) / 4) % 2;
+            if (data_type == 0) {
+                gl_stream1_out_ts[gl_stream1_out_cnt] = temp_time;
+                gl_stream1_out_cnt += 1;
+            }
+            else if (data_type == 1) {
+                gl_stream2_out_ts[gl_stream2_out_cnt] = temp_time;
+                gl_stream2_out_cnt += 1;
+            }
+            if (gl_if_debug == 1) {
+                fprintf(stderr,
+                        "%ld, stream_id: %zd, data_type: %d, flush egress written size: %zd bytes, sent size: %zd bytes; total: %d bytes, cnt %d\n",
+                        getcurTime(), cur_stream_id, data_type, written, sent, gl_debug_total_size, send_times);
+            }
+        }
+
 
         send_times += 1;
         send_size += sent;
@@ -316,42 +355,72 @@ void pipeline_th_call(gpointer data) {
         }
 
     }
-
     else if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
         //TODO: static schedule
         //10000 streams sends through
-        //send data every 1000 ms, send data 100 sec
+        //send data every 1000 ms, each stream send data 1MB
         static int sleep_ms = 1000;
-        static uint8_t foo_buffer[SYNTHETIC_DATA_LEN];
-        int data_len_per_stream = SYNTHETIC_DATA_LEN / gl_num_streams;
+        static uint8_t foo_buffer[1000];
+        int data_len_per_stream = 1000;
+
         int cur_stream_id = 9;
-        int urgency = gl_num_urgency;
+        int urgency1;
+        int urgency2;
+        int size;
+        if (gl_static_policy == 0) {
+            //same urgency for two types of data (diff ddl)
+            urgency1 = 1;
+            urgency2 = 1;
+        }
+        else if (gl_static_policy == 1) {
+            //different urgency for two types of data (diff ddl)
+            urgency1 = 1;
+            urgency2 = 2;
+        }
+        else {
+            printf("gl_static policy error %d\n", gl_static_policy);
+            return;
+        }
+
+        //start sending
         for (int k = 1; k <= 100; k++) {
             g_mutex_lock(gl_mutex);
-            for (int i = 0; i < gl_num_streams; i++) {
-                //send in the same streams
-                int size;
-                if (k != 100) {
-                    size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, false, 0, urgency, 0);
-                }
-                else {
-                    size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true, 0, urgency, 0);
-                }
-
+            gl_stream_in_ts[k-1] = getcurTime();
+            if (k != 100) {
+                size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, false, 100, urgency1, cur_stream_id);
                 if (gl_if_debug) {
                     fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d, static prior: %d\n", getcurTime(), size,
-                            data_len_per_stream, cur_stream_id, urgency);
+                            data_len_per_stream, cur_stream_id, urgency1);
                 }
                 cur_stream_id += 4;
-                urgency += 1;
+                size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, false, 200, urgency2, cur_stream_id);
+                if (gl_if_debug) {
+                    fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d, static prior: %d\n", getcurTime(), size,
+                            data_len_per_stream, cur_stream_id, urgency2);
+                }
+                cur_stream_id += 4;
             }
+            else {
+                size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true, 100, urgency1, cur_stream_id);
+                cur_stream_id += 4;
+                size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true, 200, urgency2, cur_stream_id);
+                cur_stream_id += 4;
+            }
+
             g_mutex_unlock(gl_mutex);
             flush_egress(gl_recv_conn_io, false);
             usleep(sleep_ms * 1000);
-
-            cur_stream_id = 9;
         }
+        //end of sending
+        usleep(10000 * 1000);
+        for (int i = 0; i < gl_stream1_out_cnt; i++){
+            fprintf(gl_fp_ts, "stream prior1 ts in %ld, out %ld, cnt: %d\n", gl_stream_in_ts[i], gl_stream1_out_ts[i], i);
+            fprintf(gl_fp_ts, "stream prior2 ts in %ld, out %ld, cnt: %d\n", gl_stream_in_ts[i], gl_stream1_out_ts[i], i);
+        }
+        fclose(gl_fp_ts);
+        fprintf(stdout, "End of logging\n");
     }
+
 }
 
 void start_th_pipelines() {
@@ -390,6 +459,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
     //fprintf(stderr, "%ld, recv cb\n", getcurTime());
     static bool ready_to_send = false;
     static bool is_sending = false;
+    static bool init_sending = false;
 
     struct conn_io *tmp, *conn_io = NULL;
 
@@ -609,9 +679,9 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                     if (fin && !ready_to_send) {
                         ready_to_send = true;
                         gl_recv_conn_io = conn_io;
-
+                        init_sending = true;
                         // For SYN APP
-                        if (gl_app_type == APP_SYNTHETIC_DATA) {
+ /*                       if (gl_app_type == APP_SYNTHETIC_DATA) {
                             //TODO: send same data on different streams
                             int cur_stream_id = 9;
                             static uint8_t foo_buffer[50000000]; //50MB
@@ -631,23 +701,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                                 }
                             }
                         }
-                        else if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
-                            int cur_stream_id = 44009;
-                            int urgency = 1;
-                            static uint8_t foo_buffer[10];
-                            for (int i = 0; i < gl_num_urgency; i++) {
-                                int size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, 10, true, 0, urgency, 0);
-                                //int size = quiche_conn_stream_send(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, 10, true);
-                                if (gl_if_debug) {
-                                    fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d\n", getcurTime(),
-                                            size, 10, cur_stream_id);
-                                }
-                                cur_stream_id += 4;
-                                urgency += 1;
-                            }
-
-                        }
-
+*/
                     }
                 }
                 quiche_stream_iter_free(readable);
@@ -660,6 +714,15 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
     }
 
     HASH_ITER(hh, gl_conns->h, conn_io, tmp) {
+        if (ready_to_send && quiche_conn_is_established(conn_io->conn) && init_sending) {
+            static const char resp2[100000] = {'\0'};
+            ssize_t stream_cap = quiche_conn_stream_capacity(conn_io->conn, 4);
+            printf("\nStream Cap: %d\n", stream_cap);
+            if (stream_cap > 130000) { //skip slow start phase, for 20Mbps
+                init_sending = false;
+            }
+
+        }
         flush_egress(conn_io, true);//send ack frame, etc
         if (quiche_conn_is_closed(conn_io->conn)) {
 //            quiche_stats stats;
@@ -684,7 +747,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             printf("all pipelines started\n");
         }
     }
-    else if (gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
+    else if (gl_app_type == APP_SYNTHETIC_DATA_PERIOD) {
         if (ready_to_send && !is_sending) {
             printf("APP_SYNTHETIC_DATA_PERIOD starting sending data every 1 sec\n");
             is_sending = true;
@@ -692,6 +755,17 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             printf("all pipelines started\n");
         }
     }
+    else if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
+        //ssize_t stream_cap = quiche_conn_stream_capacity(conn_io->conn, 4);
+        if (ready_to_send && !is_sending && !init_sending) {
+            printf("APP_SYNTHETIC_DATA_STATIC_SCHEDULE starting sending data every 1 sec\n");
+            is_sending = true;
+            start_th_pipelines();
+            printf("all pipelines started\n");
+        }
+
+    }
+
     return TRUE;
 }
 
@@ -862,9 +936,14 @@ int main(int argc, char *argv[]) {
         g_mutex_init(gl_mutex);
     }
     else if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
-        sscanf(argv[6], "%d", &gl_num_streams);
-        sscanf(argv[7], "%d", &gl_num_urgency);
-        fprintf(stdout, "Running synthetic data static schedule app, num_streams: %d, num_urgency: %d\n", gl_num_streams, gl_num_urgency);
+        sscanf(argv[6], "%d", &gl_static_policy); //0 for same, 1 for different
+        const char *log_file = argv[7];
+        gl_fp_ts = fopen(log_file, "w");
+        if (gl_fp_ts == NULL) {
+            fprintf(stdout, "ts log file name error\n");
+            exit(0);
+        }
+        fprintf(stdout, "Running synthetic data static schedule app, gl_static_policy: %d\n", gl_static_policy);
         gl_mutex = (GMutex *) malloc(sizeof(GMutex));
         g_mutex_init(gl_mutex);
     }

@@ -50,4 +50,4 @@ $(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs')
 	cd .. && cargo build --target-dir $(BUILD_DIR) --features ffi
 
 clean:
-	@$(RM) -rf client server http3-client server_urgency_diff_sche server_urgency_diff_sche_overhead gserver2 gclient2 http3-server build/ *.dSYM/
+	@$(RM) -rf client server http3-client server_urgency_diff_sche server_urgency_diff_sche_overhead gserver2 gclient2 srv.log cli.log http3-server build/ *.dSYM/

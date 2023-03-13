@@ -54,10 +54,6 @@
 
 #define APP_SYNTHETIC_DATA 0
 #define APP_H264_DATA 1
-#define APP_SYNTHETIC_DATA_PERIOD 2
-#define APP_SYNTHETIC_DATA_STATIC_SCHEDULE 3
-#define APP_SYNTHETIC_DATA_PERIOD_IF_NEW_STREAM 1
-#define SYNTHETIC_DATA_LEN 1000000
 
 struct conn_io {
     int sock;
@@ -411,9 +407,7 @@ int main(int argc, char *argv[]) {
     sscanf(argv[4], "%d", &gl_if_debug);
     sscanf(argv[5], "%d", &gl_app_type);
     if (gl_app_type == APP_SYNTHETIC_DATA) {
-        sscanf(argv[6], "%d", &gl_num_streams);
-        sscanf(argv[7], "%d", &gl_urgency_step);
-        fprintf(stdout, "Running synthetic data app, num_streams: %d\n", gl_num_streams);
+        fprintf(stdout, "Running synthetic data app\n");
     }
     else if (gl_app_type == APP_H264_DATA) {
         sscanf(argv[6], "%d", &gl_num_pipeline);
@@ -421,16 +415,6 @@ int main(int argc, char *argv[]) {
         read_pipeline_conf("decode_ppl.txt", gl_pipeline_infos, gl_num_pipeline);
         gl_mutex = (GMutex *) malloc(sizeof(GMutex));
         g_mutex_init(gl_mutex);
-    }
-    else if (gl_app_type == APP_SYNTHETIC_DATA_PERIOD) {
-        sscanf(argv[6], "%d", &gl_num_streams);
-        sscanf(argv[7], "%d", &gl_app_syn_period_new_stream);
-        fprintf(stdout, "Running synthetic data period app, num_streams: %d, if_new_stream: %d\n", gl_num_streams, gl_app_syn_period_new_stream);
-    }
-    else if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
-        sscanf(argv[6], "%d", &gl_num_streams);
-        sscanf(argv[7], "%d", &gl_num_urgency);
-        fprintf(stdout, "Running synthetic data static schedule app, num_streams: %d, num_urgency: %d\n", gl_num_streams, gl_num_urgency);
     }
     else {
         fprintf(stdout, "App is not defined\n");
