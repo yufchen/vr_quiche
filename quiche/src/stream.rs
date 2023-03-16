@@ -399,7 +399,7 @@ impl StreamMap {
                 // robin fashion
                 if let Some(current_incremental) = queues.1.pop_front() {
                     //queues.1.push_back(current_incremental); //Round robin
-                    queues.1.push_front(current_incremental); //FIFO
+                    queues.1.push_front(current_incremental); //FIFO DTP need
                     Some(current_incremental)
                 } else {
                     None
@@ -416,7 +416,7 @@ impl StreamMap {
             .expect("Remove previously peeked stream");
         let queues = top_urgency.get_mut();
         //queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_back()); //Round robin
-        queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_front()); //FIFO
+        queues.0.pop().map(|x| x.0).or_else(|| queues.1.pop_front()); //FIFO DTP need
         // Remove the queue from the list of queues if it is now empty, so that
         // the next time `pop_flushable()` is called the next queue with elements
         // is used.
@@ -428,6 +428,7 @@ impl StreamMap {
         &mut self, bandwidth: f64, rtt: f64, next_packet_id: u64,
         current_time: u64,
     ) -> Option<u64> {
+
         if let Some(o_queues) = self.flushable.get_mut(&DEFAULT_URGENCY) {
             let mut queues = (*o_queues).clone();
             let node = if !queues.0.is_empty() {
@@ -438,11 +439,14 @@ impl StreamMap {
                 //queues.1.pop_front();
                 let mut blocks_vec = vec![];
                 let mut peek_blocks_vec = vec![];
+
                 for i in (0..queues.1.len()).rev() {
                     let &id = queues.1.get(i).unwrap();
                     let block = self.get_block(id);
                     peek_blocks_vec.push(block);
                 }
+
+
                 for i in (0..queues.1.len()).rev() {
                     let &id = queues.1.get(i).unwrap();
                     // check if need to cancel this block
@@ -453,7 +457,7 @@ impl StreamMap {
                     let block = self.get_block(id);
                     //eprintln!("{} ms, block in queue: id {}", current_time, block.block_id);
                     if self.scheduler.should_drop_block(&block, bandwidth, rtt, next_packet_id, current_time) {
-                        self.cancel_block(id).ok()?;
+                        //self.cancel_block(id).ok()?;
                         // Block canceled, so non-flushable
                         eprintln!("drop block: {}", id);
                         queues.1.swap_remove_back(i);
@@ -462,6 +466,7 @@ impl StreamMap {
                     // add the block struct to blocks, and used by C++ code later
                     blocks_vec.push(block);
                 }
+
                 if blocks_vec.is_empty() {
                     None
                 } else {
@@ -475,13 +480,13 @@ impl StreamMap {
                     let best_block_id = Some(b_id);
                     //eprintln!("best_block_id: {}", b_id);
                     // pop(return and remove) highest_stream_id
-                    // for i in 0..queues.1.len() {
-                    //     let &id = queues.1.get(i).unwrap();
-                    //     if Some(id) == best_block_id {
-                    //         queues.1.swap_remove_front(i);
-                    //         break;
-                    //     }
-                    // }
+                    for i in 0..queues.1.len() {
+                        let &id = queues.1.get(i).unwrap();
+                        if Some(id) == best_block_id {
+                            queues.1.swap(i, 0);
+                            break;
+                        }
+                    }
                     best_block_id
                 }
             };
@@ -493,6 +498,7 @@ impl StreamMap {
             None
         }
     }
+
     pub fn get_block(&mut self, id: u64) -> Block {
         let block = self.get(id).unwrap();
         let create_time = match block
@@ -823,7 +829,7 @@ impl Stream {
             bidi,
             local,
             data: None,
-            urgency: priority as u8,
+            urgency: DEFAULT_URGENCY,
             incremental: true,
         }
     }
