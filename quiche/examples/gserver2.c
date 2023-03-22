@@ -167,18 +167,18 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
         }
 
 
-        if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE && cur_stream_id >= 9) {
+        if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE && cur_stream_id >= 9 && sent != 46) {
             int data_type = ((cur_stream_id - 9) / 4) % 2;
             if (data_type == 0) {
                 gl_stream1_out_ts[gl_stream1_out_cnt] = temp_time - gl_start_ts;
                 gl_stream1_out_cnt += 1;
-                gl_sending_order[gl_sending_order_cnt] = 0;
+                gl_sending_order[gl_sending_order_cnt] = 1;
                 gl_sending_order_cnt += 1;
             }
             else if (data_type == 1) {
                 gl_stream2_out_ts[gl_stream2_out_cnt] = temp_time - gl_start_ts;
                 gl_stream2_out_cnt += 1;
-                gl_sending_order[gl_sending_order_cnt] = 1;
+                gl_sending_order[gl_sending_order_cnt] = 2;
                 gl_sending_order_cnt += 1;
             }
             if (gl_if_debug == 1) {
@@ -393,7 +393,6 @@ void pipeline_th_call(gpointer data) {
         //start sending
         for (int k = 1; k <= 1; k++) {
             g_mutex_lock(gl_mutex);
-            gl_start_ts = getcurTime();
             if (k != 100) {
                 size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, false, 20000, urgency1, cur_stream_id);
                 if (gl_if_debug) {
@@ -414,7 +413,7 @@ void pipeline_th_call(gpointer data) {
                 size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true, 200, urgency2, cur_stream_id);
                 cur_stream_id += 4;
             }
-
+            gl_start_ts = getcurTime();
             g_mutex_unlock(gl_mutex);
             flush_egress(gl_recv_conn_io, false);
             usleep(sleep_ms * 1000);

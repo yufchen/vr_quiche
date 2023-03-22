@@ -66,8 +66,8 @@ impl Scheduler for DtpScheduler {
                     - passed_time as f64
                     - one_way_delay
                     - (tempsize as f64 / (pacing_rate * 1024.0)) * 1000.0; // Bytes / (KB/s) * 1000. (ms)
-                eprintln!("{} ms dtp scheduler: block_id {}, tempddl: {}, passed_time: {}, one_way_delay: {}, tempsize: {}, pacing_rate: {}, remaining_time: {}",
-                          current_time, block.block_id, tempddl, passed_time, one_way_delay, tempsize, pacing_rate, remaining_time);
+                // eprintln!("{} ms dtp scheduler: block_id {}, tempddl: {}, passed_time: {}, one_way_delay: {}, tempsize: {}, pacing_rate: {}, remaining_time: {}",
+                //           current_time, block.block_id, tempddl, passed_time, one_way_delay, tempsize, pacing_rate, remaining_time);
 
                 let remaining_time_weight =
                     if remaining_time > 0.0 {
