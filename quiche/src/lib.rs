@@ -1224,6 +1224,9 @@ pub struct Connection {
     /// Number of stream data bytes that can be buffered.
     tx_cap: usize,
 
+    // Number of bytes buffered in the send buffer.
+    tx_buffered: usize,
+
     /// Total number of bytes sent to the peer.
     tx_data: u64,
 
@@ -1707,6 +1710,8 @@ impl Connection {
             almost_full: false,
 
             tx_cap: 0,
+
+            tx_buffered: 0,
 
             tx_data: 0,
             max_tx_data: 0,
@@ -2669,7 +2674,8 @@ impl Connection {
                         };
 
                         stream.send.ack_and_drop(offset, length);
-
+                        self.tx_buffered =
+                            self.tx_buffered.saturating_sub(length);
                         qlog_with_type!(QLOG_DATA_MV, self.qlog, q, {
                             let ev_data = EventData::DataMoved(
                                 qlog::events::quic::DataMoved {
@@ -2965,11 +2971,13 @@ impl Connection {
         &mut self, out: &mut [u8], from: Option<SocketAddr>,
         to: Option<SocketAddr>,
     ) -> Result<(usize, SendInfo)> {
+        eprintln!("start send on path");
         if out.is_empty() {
             return Err(Error::BufferTooShort);
         }
 
         if self.is_closed() || self.is_draining() {
+            eprintln!("send_on_path {} {}", self.is_closed(), self.is_draining());
             return Err(Error::Done);
         }
 
@@ -3015,7 +3023,7 @@ impl Connection {
         if !send_path.verified_peer_address && self.is_server {
             left = cmp::min(left, send_path.max_send_bytes);
         }
-
+        eprintln!("send on path left {}", left);
         // Generate coalesced packets.
         while left > 0 {
             let (ty, written) = match self.send_single(
@@ -3060,7 +3068,7 @@ impl Connection {
 
         if done == 0 {
             self.last_tx_data = self.tx_data;
-
+            eprintln!("send_on_path2");
             return Err(Error::Done);
         }
 
@@ -3090,6 +3098,7 @@ impl Connection {
     fn send_single(
         &mut self, out: &mut [u8], send_pid: usize, has_initial: bool,
     ) -> Result<(packet::Type, usize)> {
+        eprintln!("start send single");
         let now = time::Instant::now();
 
         if out.is_empty() {
@@ -3097,6 +3106,7 @@ impl Connection {
         }
 
         if self.is_draining() {
+            eprintln!("draining");
             return Err(Error::Done);
         }
 
@@ -3213,7 +3223,7 @@ impl Connection {
         }
 
         let mut left = b.cap();
-
+        eprintln!("send single left {}", left);
         let pn = self.pkt_num_spaces[epoch].next_pkt_num;
         let pn_len = packet::pkt_num_len(pn)?;
 
@@ -3306,6 +3316,7 @@ impl Connection {
                 // This usually happens when we try to send a new packet but
                 // failed because cwnd is almost full. In such case app_limited
                 // is set to false here to make cwnd grow when ACK is received.
+                eprintln!("update_app_limited(false)");
                 self.paths
                     .get_mut(send_pid)?
                     .recovery
@@ -4519,6 +4530,8 @@ impl Connection {
 
         self.tx_data += sent as u64;
 
+        self.tx_buffered += sent;
+
         qlog_with_type!(QLOG_DATA_MV, self.qlog, q, {
             let ev_data = EventData::DataMoved(qlog::events::quic::DataMoved {
                 stream_id: Some(stream_id),
@@ -4638,6 +4651,9 @@ impl Connection {
                 // Claw back some flow control allowance from data that was
                 // buffered but not actually sent before the stream was reset.
                 self.tx_data = self.tx_data.saturating_sub(unsent);
+
+                self.tx_buffered =
+                    self.tx_buffered.saturating_sub(unsent as usize);
 
                 // Update send capacity.
                 self.update_tx_cap();
@@ -6499,6 +6515,9 @@ impl Connection {
                     // to touch it here.
                     self.tx_data = self.tx_data.saturating_sub(unsent);
 
+                    self.tx_buffered =
+                        self.tx_buffered.saturating_sub(unsent as usize);
+
                     self.streams
                         .mark_reset(stream_id, true, error_code, final_size);
 
@@ -6937,7 +6956,7 @@ impl Connection {
             .filter_map(|(_, p)| p.active().then(|| p.recovery.cwnd_available()))
             .sum();
 
-        self.tx_cap >= cwin_available &&
+        ((self.tx_buffered + self.dgram_send_queue_len()) < cwin_available) &&
             (self.tx_data.saturating_sub(self.last_tx_data)) <
                 cwin_available as u64 &&
             cwin_available > 0

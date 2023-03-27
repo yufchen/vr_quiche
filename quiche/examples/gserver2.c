@@ -132,6 +132,7 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
     while (1) {
         if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
             if (gl_is_recving) {
+                fprintf(stderr, "%ld, break of is recving \n", getcurTime());
                 break; // always do recv first
             }
         }
@@ -141,7 +142,7 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
 
 
         if (written == QUICHE_ERR_DONE) {
-            //fprintf(stderr, "%ld, flush egress done writing\n", getcurTime());
+            fprintf(stderr, "%ld, flush egress done writing\n", getcurTime());
             break;
         }
 

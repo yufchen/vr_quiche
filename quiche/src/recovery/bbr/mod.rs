@@ -289,6 +289,10 @@ fn reset(r: &mut Recovery) {
 }
 
 fn on_packet_sent(r: &mut Recovery, sent_bytes: usize, _now: Instant) {
+    let bbr = &r.bbr_state;
+    eprintln!("on_packet_sent bbr={{ state={:?} btlbw={} rtprop={:?} pacing_rate={} pacing_gain={} cwnd_gain={} target_cwnd={} send_quantum={} filled_pipe={} round_count={} }}",
+              bbr.state, bbr.btlbw, bbr.rtprop, bbr.pacing_rate, bbr.pacing_gain, bbr.cwnd_gain, bbr.target_cwnd, r.send_quantum(), bbr.filled_pipe, bbr.round_count);
+
     r.bytes_in_flight += sent_bytes;
 
     per_transmit::bbr_on_transmit(r);
@@ -297,6 +301,9 @@ fn on_packet_sent(r: &mut Recovery, sent_bytes: usize, _now: Instant) {
 fn on_packets_acked(
     r: &mut Recovery, packets: &[Acked], _epoch: packet::Epoch, now: Instant,
 ) {
+    let bbr = &r.bbr_state;
+    eprintln!("before on_packets_acked bbr={{ state={:?} btlbw={} rtprop={:?} pacing_rate={} pacing_gain={} cwnd_gain={} target_cwnd={} send_quantum={} filled_pipe={} round_count={} }}",
+              bbr.state, bbr.btlbw, bbr.rtprop, bbr.pacing_rate, bbr.pacing_gain, bbr.cwnd_gain, bbr.target_cwnd, r.send_quantum(), bbr.filled_pipe, bbr.round_count);
     r.bbr_state.newly_acked_bytes = packets.iter().fold(0, |acked_bytes, p| {
         r.bbr_state.prior_bytes_in_flight = r.bytes_in_flight;
 
@@ -317,6 +324,11 @@ fn on_packets_acked(
     per_ack::bbr_update_control_parameters(r, now);
 
     r.bbr_state.newly_lost_bytes = 0;
+
+    let bbr = &r.bbr_state;
+    eprintln!("after on_packets_acked bbr={{ state={:?} btlbw={} rtprop={:?} pacing_rate={} pacing_gain={} cwnd_gain={} target_cwnd={} send_quantum={} filled_pipe={} round_count={} }}",
+              bbr.state, bbr.btlbw, bbr.rtprop, bbr.pacing_rate, bbr.pacing_gain, bbr.cwnd_gain, bbr.target_cwnd, r.send_quantum(), bbr.filled_pipe, bbr.round_count);
+
 }
 
 fn congestion_event(
