@@ -421,6 +421,10 @@ void pipeline_th_call(gpointer data) {
         }
         //end of sending
         usleep(35000 * 1000);
+
+        quiche_conn_stats(gl_recv_conn_io->conn, &stats);
+        fprintf(gl_fp_ts, "retrans = %zu, sent = %zu, lost = %zu\n", stats.retrans, stats.sent, stats.lost);
+
         fprintf(gl_fp_ts, "total cnt: %d, prior1 cnt: %d, prior2 cnt: %d\n", gl_sending_order_cnt, gl_stream1_out_cnt, gl_stream2_out_cnt);
         for (int i = 0; i < gl_stream1_out_cnt; i++){
             fprintf(gl_fp_ts, "stream prior1 queuing delay %ld, cnt: %d\n", gl_stream1_out_ts[i], i);

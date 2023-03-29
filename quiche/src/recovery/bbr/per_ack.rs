@@ -73,7 +73,7 @@ pub fn bbr_update_control_parameters(r: &mut Recovery, now: Instant) {
 // 4.1.1.5.  Updating the BBR.BtlBw Max Filter
 fn bbr_update_btlbw(r: &mut Recovery, packet: &Acked) {
     bbr_update_round(r, packet);
-    eprintln!("update_btlbw r.delivery_rate() {}, r.bbr_state.btlbw {}", r.delivery_rate(), r.bbr_state.btlbw);
+    //eprintln!("update_btlbw r.delivery_rate() {}, r.bbr_state.btlbw {}", r.delivery_rate(), r.bbr_state.btlbw);
     if r.delivery_rate() >= r.bbr_state.btlbw ||
         !r.delivery_rate.sample_is_app_limited()
     {
@@ -84,14 +84,14 @@ fn bbr_update_btlbw(r: &mut Recovery, packet: &Acked) {
             r.bbr_state.start_time + Duration::from_secs(r.bbr_state.round_count),
             r.delivery_rate(),
         );
-        eprintln!("update_btlbw new r.delivery_rate() {}, r.bbr_state.btlbw {}", r.delivery_rate(), r.bbr_state.btlbw);
+        //eprintln!("update_btlbw new r.delivery_rate() {}, r.bbr_state.btlbw {}", r.delivery_rate(), r.bbr_state.btlbw);
     }
 }
 
 // 4.1.1.3 Tracking Time for the BBR.BtlBw Max Filter
 fn bbr_update_round(r: &mut Recovery, packet: &Acked) {
     let bbr = &mut r.bbr_state;
-    eprintln!("update_round packet.delivered {}, bbr.next_round_delivered {}", packet.delivered, bbr.next_round_delivered);
+    //eprintln!("update_round packet.delivered {}, bbr.next_round_delivered {}", packet.delivered, bbr.next_round_delivered);
     if packet.delivered >= bbr.next_round_delivered {
         bbr.next_round_delivered = r.delivery_rate.delivered();
         bbr.round_count += 1;
@@ -108,7 +108,7 @@ fn bbr_update_rtprop(r: &mut Recovery, now: Instant) {
     let rs_rtt = r.delivery_rate.sample_rtt();
 
     bbr.rtprop_expired = now > bbr.rtprop_stamp + RTPROP_FILTER_LEN;
-    eprintln!("update_rtprop expird {:?}, rs_rtt {}", now.duration_since(bbr.rtprop_stamp), bbr.rtprop.as_millis());
+    //eprintln!("update_rtprop expird {:?}, rs_rtt {}", now.duration_since(bbr.rtprop_stamp), bbr.rtprop.as_millis());
     if !rs_rtt.is_zero() && (rs_rtt <= bbr.rtprop || bbr.rtprop_expired) {
         bbr.rtprop = rs_rtt;
         bbr.rtprop_stamp = now;
@@ -138,7 +138,7 @@ fn bbr_inflight(r: &mut Recovery, gain: f64) -> usize {
 
     let quanta = 3 * r.send_quantum;
     let estimated_bdp = bbr.btlbw as f64 * bbr.rtprop.as_secs_f64();
-    eprintln!("bbr_inflight {}", (gain * estimated_bdp) as usize + quanta);
+    //eprintln!("bbr_inflight {}", (gain * estimated_bdp) as usize + quanta);
     (gain * estimated_bdp) as usize + quanta
 }
 
@@ -213,7 +213,7 @@ fn bbr_set_cwnd(r: &mut Recovery) {
 
 // 4.3.2.2.  Estimating When Startup has Filled the Pipe
 fn bbr_check_full_pipe(r: &mut Recovery) {
-    eprintln!("check_full_pipe start round {}, app_limit {}", !r.bbr_state.round_start, r.delivery_rate.sample_is_app_limited());
+    //eprintln!("check_full_pipe start round {}, app_limit {}", !r.bbr_state.round_start, r.delivery_rate.sample_is_app_limited());
     // No need to check for a full pipe now.
     if r.bbr_state.filled_pipe ||
         !r.bbr_state.round_start ||
@@ -223,7 +223,7 @@ fn bbr_check_full_pipe(r: &mut Recovery) {
     }
 
     // BBR.BtlBw still growing?
-    eprintln!("r.bbr_state.btlbw {}, full_bw{}, full_bw2{}", r.bbr_state.btlbw, r.bbr_state.full_bw as f64,  (r.bbr_state.full_bw as f64 * BTLBW_GROWTH_TARGET) as u64);
+    //eprintln!("r.bbr_state.btlbw {}, full_bw{}, full_bw2{}", r.bbr_state.btlbw, r.bbr_state.full_bw as f64,  (r.bbr_state.full_bw as f64 * BTLBW_GROWTH_TARGET) as u64);
     if r.bbr_state.btlbw >=
         (r.bbr_state.full_bw as f64 * BTLBW_GROWTH_TARGET) as u64
     {
@@ -239,7 +239,7 @@ fn bbr_check_full_pipe(r: &mut Recovery) {
     if r.bbr_state.full_bw_count >= 3 {
         r.bbr_state.filled_pipe = true;
     }
-    eprintln!("check_full_pipe r.bbr_state.full_bw_count {}", r.bbr_state.full_bw_count);
+    //eprintln!("check_full_pipe r.bbr_state.full_bw_count {}", r.bbr_state.full_bw_count);
 }
 
 // 4.3.3.  Drain
@@ -257,14 +257,14 @@ fn bbr_enter_drain(r: &mut Recovery) {
 
 fn bbr_check_drain(r: &mut Recovery, now: Instant) {
     if r.bbr_state.state == BBRStateMachine::Startup && r.bbr_state.filled_pipe {
-        eprintln!("check_drain Enter drain");
+        //eprintln!("check_drain Enter drain");
         bbr_enter_drain(r);
     }
 
     if r.bbr_state.state == BBRStateMachine::Drain &&
         r.bytes_in_flight <= bbr_inflight(r, 1.0)
     {
-        eprintln!("check_drain r.bytes_in_flight {}", r.bytes_in_flight);
+        //eprintln!("check_drain r.bytes_in_flight {}", r.bytes_in_flight);
         // we estimate queue is drained
         bbr_enter_probe_bw(r, now);
     }
@@ -334,7 +334,7 @@ fn bbr_check_probe_rtt(r: &mut Recovery, now: Instant) {
         r.bbr_state.rtprop_expired &&
         !r.bbr_state.idle_restart
     {
-        eprintln!("enter probe_rtt");
+        //eprintln!("enter probe_rtt");
         bbr_enter_probe_rtt(r);
 
         r.bbr_state.prior_cwnd = bbr_save_cwnd(r);
