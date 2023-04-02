@@ -64,7 +64,7 @@ struct conn_io {
     quiche_conn *conn;
 };
 
-
+static long gl_start_ts;
 /* Global variables */
 static int gl_use_dgram = -1;
 static int gl_if_debug = 1;
@@ -209,11 +209,13 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             int size = 0;
             size = quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) r, sizeof(r), true);
             fprintf(stdout, "sent hello request stream: %d\n", size);
+            gl_start_ts = getcurTime();
         }
         req_sent = true;
     }
 
     if (quiche_conn_is_established(conn_io->conn)) {
+        static uint8_t recv_buf[10000000];
         if (gl_use_dgram && quiche_conn_is_readable(conn_io->conn)) {
             //no dgram
             ssize_t recv_len = quiche_conn_dgram_recv(conn_io->conn, buf, sizeof(buf));
@@ -241,11 +243,15 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             while (quiche_stream_iter_next(readable, &s)) {
                 //fprintf(stderr, "%ld, stream %" PRIu64 " is readable\n", getcurTime(), s);
                 bool fin = false;
-                ssize_t recv_len = quiche_conn_stream_recv(conn_io->conn, s, buf, sizeof(buf), &fin);
+                ssize_t recv_len = quiche_conn_stream_recv(conn_io->conn, s, recv_buf, sizeof(recv_buf), &fin);
                 total_size += recv_len;
                 if (gl_if_debug) {
                     fprintf(stderr, "%ld stream_recv %ld bytes on stream id %ld, total size: %d\n", getcurTime(),
-                            recv_len, s, total_size);
+                                recv_len, s, total_size);
+//                    if (getcurTime() - gl_start_ts > 90*1000000) {
+//                        fprintf(stderr, "%ld stream_recv %ld bytes on stream id %ld, total size: %d\n", getcurTime(),
+//                                recv_len, s, total_size);
+//                    }
                 }
                 if (recv_len < 0 && recv_len != QUICHE_ERR_STREAM_RESET) {
                     fprintf(stderr, "other errors, recv len < 0\n");
@@ -444,10 +450,68 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    uint32_t sendbuff;
+    socklen_t optlen;
+    int res = 0;
+    // Get buffer size
+    optlen = sizeof(sendbuff);
+    res = getsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sendbuff, &optlen);
+    if(res == -1)
+        printf("Error getsockopt one");
+    else
+        printf("send buffer size = %d\n", sendbuff);
+
+    // Set buffer size
+    sendbuff = 2147483647;
+    printf("sets the send buffer to %d\n", sendbuff);
+    res = setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sendbuff, sizeof(sendbuff));
+    if(res == -1)
+        printf("Error setsockopt");
+
+    // Get buffer size
+    optlen = sizeof(sendbuff);
+    res = getsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sendbuff, &optlen);
+
+    if(res == -1)
+        printf("Error getsockopt two");
+    else
+        printf("send buffer size = %d\n", sendbuff);
+
+
+    uint32_t recvbuff;
+    // Get buffer size
+    optlen = sizeof(recvbuff);
+    res = getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbuff, &optlen);
+    if(res == -1)
+        printf("Error getsockopt one");
+    else
+        printf("recv buffer size = %d\n", recvbuff);
+
+    // Set buffer size
+    recvbuff = 2147483647;
+    printf("sets the recv buffer to %d\n", recvbuff);
+    res = setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbuff, sizeof(recvbuff));
+    if(res == -1)
+        printf("Error setsockopt");
+
+    // Get buffer size
+    optlen = sizeof(recvbuff);
+    res = getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbuff, &optlen);
+
+    if(res == -1)
+        printf("Error getsockopt two");
+    else
+        printf("recv buffer size = %d\n", recvbuff);
+
+
+
+
+
     if (fcntl(sock, F_SETFL, O_NONBLOCK) != 0) {
         perror("failed to make socket non-blocking");
         return -1;
     }
+
 
     quiche_config *config = quiche_config_new(0xbabababa);
     if (config == NULL) {
@@ -461,11 +525,11 @@ int main(int argc, char *argv[]) {
     quiche_config_set_max_idle_timeout(config, 5000);
     quiche_config_set_max_recv_udp_payload_size(config, MAX_DATAGRAM_SIZE);
     quiche_config_set_max_send_udp_payload_size(config, MAX_DATAGRAM_SIZE);
-    quiche_config_set_initial_max_data(config, 1000000000);
-    quiche_config_set_initial_max_stream_data_bidi_local(config, 1000000000);
-    quiche_config_set_initial_max_stream_data_bidi_remote(config, 1000000000);
-    quiche_config_set_initial_max_stream_data_uni(config, 1000000000);
-    quiche_config_set_initial_max_streams_bidi(config, 1000000000);
+    quiche_config_set_initial_max_data(config, 100000000000);
+    quiche_config_set_initial_max_stream_data_bidi_local(config, 100000000000);
+    quiche_config_set_initial_max_stream_data_bidi_remote(config, 100000000000);
+    quiche_config_set_initial_max_stream_data_uni(config, 100000000000);
+    quiche_config_set_initial_max_streams_bidi(config, 100000000000);
     quiche_config_set_initial_max_streams_uni(config, 100);
     quiche_config_set_disable_active_migration(config, true);
     quiche_config_enable_dgram(config, true, 1000, 1000);

@@ -41,7 +41,7 @@
 #define APP_SYNTHETIC_DATA_STATIC_SCHEDULE 3
 #define APP_SYNTHETIC_DATA_PERIOD_IF_NEW_STREAM 1
 #define SYNTHETIC_DATA_LEN 1000000
-
+#define MAX_PACING_QUEUE_SIZE 100000 //in packets
 
 
 /* struct definition*/
@@ -62,7 +62,57 @@ struct conn_io {
     UT_hash_handle hh;
 };
 
+typedef struct {
+    uint8_t out[MAX_DATAGRAM_SIZE];
+    quiche_send_info send_info;
+    ssize_t written;
+} pacing_buffer_t;
+
+typedef struct {
+    uint32_t head; //currently empty
+    uint32_t tail; //next to send
+    pacing_buffer_t pbuffer[MAX_PACING_QUEUE_SIZE]; //max number of packet waiting for pacing, queue size = 10000
+} pacing_queue_t;
+
+//make sure thread safe
+uint32_t pacing_queue_readable(pacing_queue_t* queue){
+    if (queue->tail == queue->head) {
+        // no more to read, wait for write
+        return -1;
+    }
+    return queue->tail;
+}
+
+void pacing_queue_update_read(pacing_queue_t* queue){
+    queue->tail = (queue->tail + 1) % MAX_PACING_QUEUE_SIZE;
+}
+
+uint32_t pacing_queue_writable(pacing_queue_t* queue){
+    //return the index of the next empty buffer that is going to be written by quiche_conn_send
+    if (((queue->head + 1) % MAX_PACING_QUEUE_SIZE) == queue->tail) {
+        return -1;
+    }
+    //queue->head = (queue->head + 1) % MAX_PACING_QUEUE_SIZE;
+    return (queue->head + 1) % MAX_PACING_QUEUE_SIZE;
+}
+
+uint32_t pacing_queue_update_write(pacing_queue_t* queue){
+    //return the index of the next empty buffer that is going to be written by quiche_conn_send
+    if (((queue->head + 1) % MAX_PACING_QUEUE_SIZE) == queue->tail) {
+        return -1;
+    }
+    queue->head = (queue->head + 1) % MAX_PACING_QUEUE_SIZE;
+    return queue->head;
+}
+
+
+
+pacing_queue_t gl_pacing_queue;
+
+
 int gl_debug_total_size = 0;
+FILE *gl_tmp_fp = NULL;
+
 
 /* Global variables */
 static bool gl_is_recving = false;
@@ -81,6 +131,7 @@ static int gl_static_policy = -1;
 //for ts log params
 FILE * gl_fp_ts = NULL;
 static long gl_start_ts;
+static long gl_stream_out_bytes_cnt = 0;
 static long gl_stream1_out_ts[100000000];
 static int gl_stream1_out_cnt = 0;
 
@@ -89,7 +140,6 @@ static int gl_stream2_out_cnt = 0;
 
 static int gl_sending_order[100000000];
 static int gl_sending_order_cnt = 0;
-
 
 
 
@@ -111,17 +161,104 @@ long getcurTime() {
 }
 
 
+long get_delay_from_now_time_us(struct timespec rust_next_ts, bool if_first) {
+    //calculate time_elapsed in rust
+    static struct timespec rust_zero_ts;
+    static long c_zero_ts;
+    long rust_delta_us = 0;
+    long c_delta_us = 0;
+    long result_delay_us = 0;
+    if (if_first) {
+        rust_zero_ts = rust_next_ts;
+        c_zero_ts = getcurTime();
+        return 0;
+    }
+
+    rust_delta_us = (rust_next_ts.tv_sec - rust_zero_ts.tv_sec) * 1000000 + (long) ((rust_next_ts.tv_nsec - rust_zero_ts.tv_nsec) / 1000);
+    c_delta_us = getcurTime() - c_zero_ts;
+    result_delay_us = rust_delta_us - c_delta_us;
+    //fprintf(stderr, "rust %ld, c %ld, result %ld\n", rust_delta_us, c_delta_us, result_delay_us);
+    if (result_delay_us < 0) {
+        result_delay_us = 0;
+    }
+
+    return result_delay_us;
+}
+
+
+
+
 static void debug_log(const char *line, void *argp) {
     fprintf(stderr, "%s\n", line);
 }
 
+
+
+
+void udp_pacing(gpointer data) {
+    //avoid using mutex
+    long delay_us;
+    long pkt_cnt = 0;
+    bool if_first_pkt = true;
+    while (1) {
+        uint32_t pbuf_idx = pacing_queue_readable(&gl_pacing_queue);
+        if (pbuf_idx != -1) {
+            if (gl_recv_conn_io == NULL) {
+                fprintf(stderr, "udp_pacing error, connection not exist\n");
+                break;
+            }
+//            fprintf(gl_tmp_fp, "pkt_cnt %ld, udp_pacing next tv_sec %ld, tv_nsec %ld\n", pkt_cnt,
+//                    gl_pacing_queue.pbuffer[pbuf_idx].send_info.at.tv_sec, gl_pacing_queue.pbuffer[pbuf_idx].send_info.at.tv_nsec);
+
+            if (gl_pacing_queue.pbuffer[pbuf_idx].send_info.at.tv_sec == 0 && gl_pacing_queue.pbuffer[pbuf_idx].send_info.at.tv_nsec == 0) {
+                //inital packet, directly send them
+                pkt_cnt += 1;
+                pacing_queue_update_read(&gl_pacing_queue);
+                continue;
+            }
+            else if (if_first_pkt) {
+                if_first_pkt = false;
+                delay_us = get_delay_from_now_time_us(gl_pacing_queue.pbuffer[pbuf_idx].send_info.at, true);
+            }
+            else {
+                delay_us = get_delay_from_now_time_us(gl_pacing_queue.pbuffer[pbuf_idx].send_info.at, false);
+            }
+
+            if (delay_us >= 1) {
+                // need to wait for some time
+                usleep(delay_us);
+            }
+            ssize_t sent = sendto(gl_recv_conn_io->sock, gl_pacing_queue.pbuffer[pbuf_idx].out, gl_pacing_queue.pbuffer[pbuf_idx].written, 0,
+                                  (struct sockaddr *) &gl_pacing_queue.pbuffer[pbuf_idx].send_info.to,
+                                  gl_pacing_queue.pbuffer[pbuf_idx].send_info.to_len);
+//            fprintf(gl_tmp_fp,
+//                    "%ld, udp pacing pbuf id %d, pkt cnt %ld, cur_pkt_wait_wait_time %ld us, %ld, %ld\n",
+//                    getcurTime(), pbuf_idx, pkt_cnt, delay_us, sent, gl_pacing_queue.pbuffer[pbuf_idx].written);
+
+            if (sent != gl_pacing_queue.pbuffer[pbuf_idx].written) {
+                perror("udp_pacing error, send udp fail");
+                break;
+            }
+
+            pkt_cnt += 1;
+            pacing_queue_update_read(&gl_pacing_queue);
+        }
+        else {
+            //no more to read, wait for next send and sleep for 1us
+            usleep(1);
+        }
+    }
+}
+
+
+
 static void flush_egress(struct conn_io *conn_io, bool is_recv) {
     //fprintf(stdout, "Call flush_egress\n");
-    static uint8_t out[MAX_DATAGRAM_SIZE];
+    //static uint8_t out[MAX_DATAGRAM_SIZE];
     static int send_times = 0;
     static int send_size = 0;
 
-    quiche_send_info send_info;
+    //quiche_send_info send_info;
     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
         if (is_recv) {
             send_times = 0;
@@ -136,13 +273,28 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
                 break; // always do recv first
             }
         }
-        ssize_t written = quiche_conn_send(conn_io->conn, out, sizeof(out), &send_info);
+        //ssize_t written = quiche_conn_send(conn_io->conn, out, sizeof(out), &send_info);
+        uint32_t pbuf_idx = pacing_queue_writable(&gl_pacing_queue);
+        if (pbuf_idx == -1) {
+            fprintf(stderr, "%ld, pacing exceed max number 10000\n", getcurTime());
+            break;
+        }
+        ssize_t written = quiche_conn_send(conn_io->conn, gl_pacing_queue.pbuffer[pbuf_idx].out, sizeof(gl_pacing_queue.pbuffer[pbuf_idx].out),
+                                           &gl_pacing_queue.pbuffer[pbuf_idx].send_info);
+        gl_pacing_queue.pbuffer[pbuf_idx].written = written;
+        if (pacing_queue_update_write(&gl_pacing_queue) == -1) {
+            fprintf(stderr, "%ld, pacing exceed max number 10000 after\n", getcurTime());
+            break;
+        }
+
+
+
         long temp_time = getcurTime();
         ssize_t cur_stream_id = quiche_conn_find_my_cur_stream_id(conn_io->conn);
 
 
         if (written == QUICHE_ERR_DONE) {
-            fprintf(stderr, "%ld, flush egress done writing\n", getcurTime());
+            //fprintf(stderr, "%ld, flush egress done writing\n", getcurTime());
             break;
         }
 
@@ -152,29 +304,31 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
         }
 
 
-        ssize_t sent = sendto(conn_io->sock, out, written, 0,
-                              (struct sockaddr *) &send_info.to,
-                              send_info.to_len);
+//        ssize_t sent = sendto(conn_io->sock, out, written, 0,
+//                              (struct sockaddr *) &send_info.to,
+//                              send_info.to_len);
 
-        gl_debug_total_size += sent;
+        gl_debug_total_size += written;
+        //fprintf(stderr,"%ld, flush egress written size: %zd bytes, sent size: %zd bytes; total: %d bytes, cnt %d\n", getcurTime(), written, sent, gl_debug_total_size, send_times);
 //        if (gl_if_debug == 1) {
 //            fprintf(stderr,
 //                    "%ld, flush egress written size: %zd bytes, sent size: %zd bytes; total: %d bytes, cnt %d\n",
 //                    getcurTime(), written, sent, gl_debug_total_size, send_times);
 //        }
-        if (sent != written) {
-            perror("flush egress failed to send");
-            break;
-        }
+//        if (sent != written) {
+//            perror("flush egress failed to send");
+//            break;
+//        }
 
 
-        if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE && cur_stream_id >= 9 && sent != 46) {
+        if (gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE && cur_stream_id >= 9) {
             int data_type = ((cur_stream_id - 9) / 4) % 2;
             if (data_type == 0) {
                 gl_stream1_out_ts[gl_stream1_out_cnt] = temp_time - gl_start_ts;
                 gl_stream1_out_cnt += 1;
                 gl_sending_order[gl_sending_order_cnt] = 1;
                 gl_sending_order_cnt += 1;
+                gl_stream_out_bytes_cnt += written;
             }
             else if (data_type == 1) {
                 gl_stream2_out_ts[gl_stream2_out_cnt] = temp_time - gl_start_ts;
@@ -185,14 +339,12 @@ static void flush_egress(struct conn_io *conn_io, bool is_recv) {
             if (gl_if_debug == 1) {
                 fprintf(stderr,
                         "%ld, stream_id: %zd, data_type: %d, flush egress written size: %zd bytes, sent size: %zd bytes; total: %d bytes, cnt %d\n",
-                        getcurTime(), cur_stream_id, data_type, written, sent, gl_debug_total_size, send_times);
-                fprintf(stderr,
-                        "%d %d\n",gl_stream1_out_cnt, gl_stream2_out_cnt);
+                        getcurTime(), cur_stream_id, data_type, written, written, gl_debug_total_size, send_times);
             }
         }
 
         send_times += 1;
-        send_size += sent;
+        send_size += written;
     }
     if (gl_app_type == APP_H264_DATA || gl_app_type == APP_SYNTHETIC_DATA_PERIOD || gl_app_type == APP_SYNTHETIC_DATA_STATIC_SCHEDULE) {
         g_mutex_unlock(gl_mutex);
@@ -390,10 +542,21 @@ void pipeline_th_call(gpointer data) {
             return;
         }
         //wait for empty que
-        usleep(20000 * 1000);
+        //usleep(20000 * 1000);
         //start sending
         for (int k = 1; k <= 1; k++) {
             g_mutex_lock(gl_mutex);
+            // Send only one block
+            for (int j = 1; j <= 20; j++) {
+                size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer,
+                                                    data_len_per_stream, false, 100000, urgency1, cur_stream_id);
+                if (gl_if_debug) {
+                    fprintf(stderr, "%ld, stream_send %d/%d bytes on stream id %d, static prior: %d\n", getcurTime(),
+                            size,
+                            data_len_per_stream, cur_stream_id, urgency1);
+                }
+            }
+            /* numerical example
             if (k != 100) {
                 size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, false, 20000, urgency1, cur_stream_id);
                 if (gl_if_debug) {
@@ -414,31 +577,37 @@ void pipeline_th_call(gpointer data) {
                 size = quiche_conn_stream_send_full(gl_recv_conn_io->conn, cur_stream_id, foo_buffer, data_len_per_stream, true, 200, urgency2, cur_stream_id);
                 cur_stream_id += 4;
             }
+             */
             gl_start_ts = getcurTime();
             g_mutex_unlock(gl_mutex);
             flush_egress(gl_recv_conn_io, false);
             usleep(sleep_ms * 1000);
         }
         //end of sending
-        usleep(35000 * 1000);
+        usleep(120000 * 1000);
 
+        quiche_stats stats;
         quiche_conn_stats(gl_recv_conn_io->conn, &stats);
-        fprintf(gl_fp_ts, "retrans = %zu, sent = %zu, lost = %zu\n", stats.retrans, stats.sent, stats.lost);
+        fprintf(gl_fp_ts, "retrans = %zu, sent = %zu, lost = %zu, star_time = %ld\n", stats.retrans, stats.sent, stats.lost, gl_start_ts);
+        fprintf(gl_fp_ts, "total pkt cnt: %d, prior1 cnt: %d, prior2 cnt: %d bytes cnt %ld\n",
+                gl_sending_order_cnt, gl_stream1_out_cnt, gl_stream2_out_cnt, gl_stream_out_bytes_cnt);
 
-        fprintf(gl_fp_ts, "total cnt: %d, prior1 cnt: %d, prior2 cnt: %d\n", gl_sending_order_cnt, gl_stream1_out_cnt, gl_stream2_out_cnt);
-        for (int i = 0; i < gl_stream1_out_cnt; i++){
-            fprintf(gl_fp_ts, "stream prior1 queuing delay %ld, cnt: %d\n", gl_stream1_out_ts[i], i);
-        }
-
-        for (int i = 0; i < gl_stream2_out_cnt; i++){
-            fprintf(gl_fp_ts, "stream prior2 queuing delay %ld, cnt: %d\n", gl_stream2_out_ts[i], i);
-        }
-
-        for (int i = 0; i < gl_sending_order_cnt; i++){
-            fprintf(gl_fp_ts, "sending order: data type: %d, cnt: %d\n", gl_sending_order[i], i);
-        }
+//        fprintf(gl_fp_ts, "total cnt: %d, prior1 cnt: %d, prior2 cnt: %d bytes cnt %ld\n",
+//                gl_sending_order_cnt, gl_stream1_out_cnt, gl_stream2_out_cnt, gl_stream_out_bytes_cnt);
+//        for (int i = 0; i < gl_stream1_out_cnt; i++){
+//            fprintf(gl_fp_ts, "stream prior1 queuing delay %ld, cnt: %d\n", gl_stream1_out_ts[i], i);
+//        }
+//
+//        for (int i = 0; i < gl_stream2_out_cnt; i++){
+//            fprintf(gl_fp_ts, "stream prior2 queuing delay %ld, cnt: %d\n", gl_stream2_out_ts[i], i);
+//        }
+//
+//        for (int i = 0; i < gl_sending_order_cnt; i++){
+//            fprintf(gl_fp_ts, "sending order: data type: %d, cnt: %d\n", gl_sending_order[i], i);
+//        }
 
         fclose(gl_fp_ts);
+        fclose(gl_tmp_fp);
         fprintf(stdout, "End of logging\n");
     }
 
@@ -658,6 +827,9 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                 }
                 continue;
             }
+            else {
+                gl_recv_conn_io = conn_io;
+            }
         }
 
         quiche_recv_info recv_info = {
@@ -694,7 +866,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                     return FALSE;
                 }
                 ready_to_send = true;
-                gl_recv_conn_io = conn_io;
+                //gl_recv_conn_io = conn_io;
             }
             else {
                 //for stream recv
@@ -715,7 +887,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
                     }
                     if (fin && !ready_to_send) {
                         ready_to_send = true;
-                        gl_recv_conn_io = conn_io;
+                        //gl_recv_conn_io = conn_io;
                         init_sending = true;
                         // For SYN APP
                         /*                       if (gl_app_type == APP_SYNTHETIC_DATA) {
@@ -753,6 +925,7 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
 
     HASH_ITER(hh, gl_conns->h, conn_io, tmp) {
         if (ready_to_send && quiche_conn_is_established(conn_io->conn) && init_sending) {
+            /*
             static const char resp2[100000] = {'\0'};
             quiche_path_stats path_stats;
             quiche_conn_path_stats(conn_io->conn, 0, &path_stats);
@@ -764,8 +937,10 @@ static gboolean recv_cb (GIOChannel *channel, GIOCondition condition, gpointer d
             else {
                 quiche_conn_stream_send(conn_io->conn, 4, (uint8_t *) resp2, 50000, false);
             }
-
+            */
+            init_sending = false;
         }
+        //need to create new thread and let this event end
 
         flush_egress(conn_io, true);//send ack frame, etc
         if (quiche_conn_is_closed(conn_io->conn)) {
@@ -987,6 +1162,12 @@ int main(int argc, char *argv[]) {
             fprintf(stdout, "ts log file name error\n");
             exit(0);
         }
+
+        gl_tmp_fp = fopen("srv_debug.log", "w");
+        if (gl_tmp_fp == NULL) {
+            fprintf(stdout, "debug log file name error\n");
+            exit(0);
+        }
         fprintf(stdout, "Running synthetic data static schedule app, gl_static_policy: %d\n", gl_static_policy);
         gl_mutex = (GMutex *) malloc(sizeof(GMutex));
         g_mutex_init(gl_mutex);
@@ -1018,6 +1199,67 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    uint32_t sendbuff;
+    socklen_t optlen;
+    int res = 0;
+    // Get buffer size
+    optlen = sizeof(sendbuff);
+    res = getsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sendbuff, &optlen);
+    if(res == -1)
+        printf("Error getsockopt one");
+    else
+        printf("send buffer size = %d\n", sendbuff);
+
+    // Set buffer size
+    sendbuff = 2147483647;
+    printf("sets the send buffer to %d\n", sendbuff);
+    res = setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sendbuff, sizeof(sendbuff));
+    if(res == -1)
+        printf("Error setsockopt");
+
+    // Get buffer size
+    optlen = sizeof(sendbuff);
+    res = getsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sendbuff, &optlen);
+
+    if(res == -1)
+        printf("Error getsockopt two");
+    else
+        printf("send buffer size = %d\n", sendbuff);
+
+
+    uint32_t recvbuff;
+    // Get buffer size
+    optlen = sizeof(recvbuff);
+    res = getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbuff, &optlen);
+    if(res == -1)
+        printf("Error getsockopt one");
+    else
+        printf("recv buffer size = %d\n", recvbuff);
+
+    // Set buffer size
+    recvbuff = 2147483647;
+    printf("sets the recv buffer to %d\n", recvbuff);
+    res = setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbuff, sizeof(recvbuff));
+    if(res == -1)
+        printf("Error setsockopt");
+
+    // Get buffer size
+    optlen = sizeof(recvbuff);
+    res = getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recvbuff, &optlen);
+
+    if(res == -1)
+        printf("Error getsockopt two");
+    else
+        printf("recv buffer size = %d\n", recvbuff);
+
+
+
+
+
+
+
+
+
     if (fcntl(sock, F_SETFL, O_NONBLOCK) != 0) {
         perror("failed to make socket non-blocking");
         return -1;
@@ -1043,10 +1285,10 @@ int main(int argc, char *argv[]) {
     quiche_config_set_max_idle_timeout(gl_config, 5000);
     quiche_config_set_max_recv_udp_payload_size(gl_config, MAX_DATAGRAM_SIZE);
     quiche_config_set_max_send_udp_payload_size(gl_config, MAX_DATAGRAM_SIZE);
-    quiche_config_set_initial_max_data(gl_config, 1000000000);
-    quiche_config_set_initial_max_stream_data_bidi_local(gl_config, 1000000000);
-    quiche_config_set_initial_max_stream_data_bidi_remote(gl_config, 1000000000);
-    quiche_config_set_initial_max_streams_bidi(gl_config, 1000000000);
+    quiche_config_set_initial_max_data(gl_config, 100000000000);
+    quiche_config_set_initial_max_stream_data_bidi_local(gl_config, 100000000000);
+    quiche_config_set_initial_max_stream_data_bidi_remote(gl_config, 100000000000);
+    quiche_config_set_initial_max_streams_bidi(gl_config, 100000000000);
     //quiche_config_set_cc_algorithm(gl_config, QUICHE_CC_RENO);
     quiche_config_set_cc_algorithm(gl_config, QUICHE_CC_BBR);
     quiche_config_enable_dgram(gl_config, true, 1000, 1000);
@@ -1076,7 +1318,16 @@ int main(int argc, char *argv[]) {
 //            g_error_free(th_error);
 //        }
 //    }
-
+    GError* th_error = NULL;
+    GThread * thread_udp_pacing = g_thread_try_new(NULL, (GThreadFunc) udp_pacing,
+                                              NULL, &th_error);
+    if (thread_udp_pacing == NULL) {
+        g_critical("Create thread_udp_pacing error: %s\n", th_error->message);
+        g_error_free(th_error);
+    }
+    gl_pacing_queue.head = 0;
+    gl_pacing_queue.tail = 0;
+    memset(gl_pacing_queue.pbuffer, 0, MAX_PACING_QUEUE_SIZE * sizeof(pacing_buffer_t));
 
     /* main thread waiting for recv IO event*/
     gpointer m_data = NULL;

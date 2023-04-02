@@ -2472,7 +2472,7 @@ impl Connection {
             pn,
             AddrTupleFmt(info.from, info.to)
         );
-
+        eprintln!("recv pn={}", pn);
         #[cfg(feature = "qlog")]
         let mut qlog_frames = vec![];
 
@@ -2648,9 +2648,11 @@ impl Connection {
                         // largest acknowledged in the sent ACK frame that, in
                         // turn, got acked.
                         if let Some(largest_acked) = ranges.last() {
+                            eprintln!("remove before recv_pkt_need_ack {:?}, largest ack {:?}, range last {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack, largest_acked, ranges.last());
                             self.pkt_num_spaces[epoch]
                                 .recv_pkt_need_ack
                                 .remove_until(largest_acked);
+                            eprintln!("remove after recv_pkt_need_ack {:?}, largest ack {:?}, range last {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack, largest_acked, ranges.last());
                         }
                     },
 
@@ -2761,7 +2763,7 @@ impl Connection {
         self.pkt_num_spaces[epoch].recv_pkt_num.insert(pn);
 
         self.pkt_num_spaces[epoch].recv_pkt_need_ack.push_item(pn);
-
+        eprintln!("push pn {:?}, recv_pkt_need_ack {:?}", pn, self.pkt_num_spaces[epoch].recv_pkt_need_ack);
         self.pkt_num_spaces[epoch].ack_elicited =
             cmp::max(self.pkt_num_spaces[epoch].ack_elicited, ack_elicited);
 
@@ -2971,13 +2973,11 @@ impl Connection {
         &mut self, out: &mut [u8], from: Option<SocketAddr>,
         to: Option<SocketAddr>,
     ) -> Result<(usize, SendInfo)> {
-        eprintln!("start send on path");
         if out.is_empty() {
             return Err(Error::BufferTooShort);
         }
 
         if self.is_closed() || self.is_draining() {
-            eprintln!("send_on_path {} {}", self.is_closed(), self.is_draining());
             return Err(Error::Done);
         }
 
@@ -3023,7 +3023,6 @@ impl Connection {
         if !send_path.verified_peer_address && self.is_server {
             left = cmp::min(left, send_path.max_send_bytes);
         }
-        eprintln!("send on path left {}", left);
         // Generate coalesced packets.
         while left > 0 {
             let (ty, written) = match self.send_single(
@@ -3068,7 +3067,6 @@ impl Connection {
 
         if done == 0 {
             self.last_tx_data = self.tx_data;
-            eprintln!("send_on_path2");
             return Err(Error::Done);
         }
 
@@ -3098,7 +3096,6 @@ impl Connection {
     fn send_single(
         &mut self, out: &mut [u8], send_pid: usize, has_initial: bool,
     ) -> Result<(packet::Type, usize)> {
-        eprintln!("start send single");
         let now = time::Instant::now();
 
         if out.is_empty() {
@@ -3106,7 +3103,6 @@ impl Connection {
         }
 
         if self.is_draining() {
-            eprintln!("draining");
             return Err(Error::Done);
         }
 
@@ -3223,7 +3219,6 @@ impl Connection {
         }
 
         let mut left = b.cap();
-        eprintln!("send single left {}", left);
         let pn = self.pkt_num_spaces[epoch].next_pkt_num;
         let pn_len = packet::pkt_num_len(pn)?;
 
@@ -3316,7 +3311,6 @@ impl Connection {
                 // This usually happens when we try to send a new packet but
                 // failed because cwnd is almost full. In such case app_limited
                 // is set to false here to make cwnd grow when ACK is received.
-                eprintln!("update_app_limited(false)");
                 self.paths
                     .get_mut(send_pid)?
                     .recovery
@@ -3386,7 +3380,7 @@ impl Connection {
                 ranges: self.pkt_num_spaces[epoch].recv_pkt_need_ack.clone(),
                 ecn_counts: None, // sending ECN is not supported at this time
             };
-
+            eprintln!("send ack ranges {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack.clone());
             // ACK-only packets are not congestion controlled so ACKs must be
             // bundled considering the buffer capacity only, and not
             // the available cwnd.
@@ -4157,7 +4151,7 @@ impl Connection {
             is_app_limited: false,
             has_data,
         };
-
+        //eprintln!("send single sent_pkt pktnum {}, time_sent {:?}", sent_pkt.pkt_num, sent_pkt.time_sent);
         if in_flight && self.delivery_rate_check_if_app_limited() {
             self.paths
                 .get_mut(send_pid)?

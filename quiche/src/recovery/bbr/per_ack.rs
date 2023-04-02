@@ -108,8 +108,8 @@ fn bbr_update_rtprop(r: &mut Recovery, now: Instant) {
     let rs_rtt = r.delivery_rate.sample_rtt();
 
     bbr.rtprop_expired = now > bbr.rtprop_stamp + RTPROP_FILTER_LEN;
-    //eprintln!("update_rtprop expird {:?}, rs_rtt {}", now.duration_since(bbr.rtprop_stamp), bbr.rtprop.as_millis());
     if !rs_rtt.is_zero() && (rs_rtt <= bbr.rtprop || bbr.rtprop_expired) {
+        //eprintln!("update_rtprop expird {:?}, rs_rtt {}", now.duration_since(bbr.rtprop_stamp), bbr.rtprop.as_millis());
         bbr.rtprop = rs_rtt;
         bbr.rtprop_stamp = now;
     }

@@ -115,6 +115,9 @@ impl Rate {
                 .saturating_duration_since(pkt.delivered_time);
 
             self.first_sent_time = pkt.time_sent;
+            // eprintln!("Update rate sample: prior_delivered {:?}, prior_time {:?}, is_app_limited {:?}, send_elapsed {:?}, rtt {:?}, ack_elapsed {:?}",
+            //           self.rate_sample.prior_delivered, self.rate_sample.prior_time, self.rate_sample.is_app_limited,
+            //           self.rate_sample.send_elapsed, self.rate_sample.rtt, self.rate_sample.ack_elapsed);
         }
 
         self.largest_acked = self.largest_acked.max(pkt.pkt_num);
@@ -135,6 +138,9 @@ impl Rate {
             self.rate_sample.delivered =
                 self.delivered - self.rate_sample.prior_delivered;
             self.rate_sample.interval = interval;
+
+            // eprintln!("Generate rate sample send_elapsed {:?}, ack_elapsed {:?}, min rtt {:?}, self.delivered {:?}, self.rate_sample.prior_delivered {:?} ",
+            //           self.rate_sample.send_elapsed, self.rate_sample.ack_elapsed, min_rtt, self.delivered, self.rate_sample.prior_delivered);
 
             if interval < min_rtt {
                 self.rate_sample.interval = Duration::ZERO;

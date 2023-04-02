@@ -201,6 +201,7 @@ fn on_packets_acked(
 ) {
     for pkt in packets {
         on_packet_acked(r, pkt, epoch, now);
+        //eprintln!("CC window: {:?}", r.congestion_window);
     }
 }
 
