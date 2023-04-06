@@ -371,7 +371,7 @@ impl Recovery {
         self.schedule_next_packet(epoch, now, sent_bytes);
 
         pkt.time_sent = self.get_packet_send_time();
-        eprintln!("on_packet_sent pkt pktnum {}, time_sent {:?}, pkt_deliverd {}, pacing rate {:?}", pkt.pkt_num, pkt.time_sent, pkt.delivered, self.pacer.rate());
+        //eprintln!("on_packet_sent pkt pktnum {}, time_sent {:?}, pkt_deliverd {}, pacing rate {:?}", pkt.pkt_num, pkt.time_sent, pkt.delivered, self.pacer.rate());
         // bytes_in_flight is already updated. Use previous value.
         self.delivery_rate
             .on_packet_sent(&mut pkt, self.bytes_in_flight - sent_bytes);
@@ -526,8 +526,8 @@ impl Recovery {
 
                     is_app_limited: unacked.is_app_limited,
                 });
-                eprintln!("newly acked pktnum {}, time_sent {:?}, now {:?}, rtt {:?}, delivered {:?},",
-                          unacked.pkt_num, unacked.time_sent, now, now.saturating_duration_since(unacked.time_sent), unacked.delivered);
+                //eprintln!("newly acked pktnum {}, time_sent {:?}, now {:?}, rtt {:?}, delivered {:?},",
+                //          unacked.pkt_num, unacked.time_sent, now, now.saturating_duration_since(unacked.time_sent), unacked.delivered);
                 trace!("{} packet newly acked {}", trace_id, unacked.pkt_num);
             }
         }
@@ -895,8 +895,8 @@ impl Recovery {
 
                     self.in_flight_count[epoch] =
                         self.in_flight_count[epoch].saturating_sub(1);
-                    eprintln!("packet {} lost, time_sent {:?}, lost_send_time {:?}, largest_acked {}, unacked.pkt_num{}, self.pkt_thresh {}, latest rtt {:?}, rtt {:?}, loss delay {:?}",
-                              unacked.pkt_num, unacked.time_sent, lost_send_time, largest_acked, unacked.pkt_num, self.pkt_thresh, self.latest_rtt, self.smoothed_rtt, loss_delay);
+                    //eprintln!("packet {} lost, time_sent {:?}, lost_send_time {:?}, largest_acked {}, unacked.pkt_num{}, self.pkt_thresh {}, latest rtt {:?}, rtt {:?}, loss delay {:?}",
+                    //          unacked.pkt_num, unacked.time_sent, lost_send_time, largest_acked, unacked.pkt_num, self.pkt_thresh, self.latest_rtt, self.smoothed_rtt, loss_delay);
                     trace!(
                         "{} packet {} lost on epoch {}",
                         trace_id,

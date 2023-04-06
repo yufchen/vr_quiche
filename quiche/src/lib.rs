@@ -2472,7 +2472,7 @@ impl Connection {
             pn,
             AddrTupleFmt(info.from, info.to)
         );
-        eprintln!("recv pn={}", pn);
+        //eprintln!("recv pn={}", pn);
         #[cfg(feature = "qlog")]
         let mut qlog_frames = vec![];
 
@@ -2648,11 +2648,11 @@ impl Connection {
                         // largest acknowledged in the sent ACK frame that, in
                         // turn, got acked.
                         if let Some(largest_acked) = ranges.last() {
-                            eprintln!("remove before recv_pkt_need_ack {:?}, largest ack {:?}, range last {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack, largest_acked, ranges.last());
+                            //("remove before recv_pkt_need_ack {:?}, largest ack {:?}, range last {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack, largest_acked, ranges.last());
                             self.pkt_num_spaces[epoch]
                                 .recv_pkt_need_ack
                                 .remove_until(largest_acked);
-                            eprintln!("remove after recv_pkt_need_ack {:?}, largest ack {:?}, range last {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack, largest_acked, ranges.last());
+                            //eprintln!("remove after recv_pkt_need_ack {:?}, largest ack {:?}, range last {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack, largest_acked, ranges.last());
                         }
                     },
 
@@ -2763,7 +2763,7 @@ impl Connection {
         self.pkt_num_spaces[epoch].recv_pkt_num.insert(pn);
 
         self.pkt_num_spaces[epoch].recv_pkt_need_ack.push_item(pn);
-        eprintln!("push pn {:?}, recv_pkt_need_ack {:?}", pn, self.pkt_num_spaces[epoch].recv_pkt_need_ack);
+        //eprintln!("push pn {:?}, recv_pkt_need_ack {:?}", pn, self.pkt_num_spaces[epoch].recv_pkt_need_ack);
         self.pkt_num_spaces[epoch].ack_elicited =
             cmp::max(self.pkt_num_spaces[epoch].ack_elicited, ack_elicited);
 
@@ -3380,7 +3380,7 @@ impl Connection {
                 ranges: self.pkt_num_spaces[epoch].recv_pkt_need_ack.clone(),
                 ecn_counts: None, // sending ECN is not supported at this time
             };
-            eprintln!("send ack ranges {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack.clone());
+            //eprintln!("send ack ranges {:?}", self.pkt_num_spaces[epoch].recv_pkt_need_ack.clone());
             // ACK-only packets are not congestion controlled so ACKs must be
             // bundled considering the buffer capacity only, and not
             // the available cwnd.
